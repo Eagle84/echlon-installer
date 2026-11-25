@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
-import { buildFeeds, newKeys, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildFeeds, newKeys, sandboxHosts, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const GOOD = 'ghp_goodkey_00000000000000000000';
 const UI_ONLY = 'ghp_uionly_00000000000000000000';
@@ -23,6 +23,7 @@ async function install(extra = [], { token = GOOD, feeds = buildFeeds({ privateK
   const asked = answers.map((a) => (a === '@DIR' ? dir : a));
   const dirArgs = askDir ? [] : ['--dir', dir];
   const code = await run([...dirArgs, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', pubkey, ...(secretsLeft ? [] : ['--token-env', 'PACK_KEY']), ...extra], {
+    hostCtx: sandboxHosts(),
     ...deps,
     env: env ?? { PACK_KEY: token },
     out: (l) => lines.push(l),
