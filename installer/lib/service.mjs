@@ -67,8 +67,11 @@ export class ServiceFeed {
     const body = await res.json().catch(() => null);
     if (!body?.manifest || !body?.artifact?.url || !body?.artifact?.name) throw new PackError('The download service gave an answer that could not be read.');
     const { manifest, artifact } = body;
+    // The key of a sealed release is held in memory for this install only, and is never written anywhere.
+    const contentKey = typeof body.contentKey === 'string' ? Buffer.from(body.contentKey, 'base64') : undefined;
     return {
       manifest,
+      contentKey,
       artifactFor: (name) => (name === artifact.name ? { save: (file, onProgress) => this.save(artifact.url, file, def.name, onProgress, artifact.size) } : null),
     };
   }
