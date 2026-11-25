@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
-import { buildFeeds, newKeys, sandboxHosts, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildFeeds, newKeys, noPath, sandboxHosts, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const GOOD = 'ghp_goodkey_00000000000000000000';
 const UI_ONLY = 'ghp_uionly_00000000000000000000';
@@ -24,6 +24,7 @@ async function install(extra = [], { token = GOOD, feeds = buildFeeds({ privateK
   const dirArgs = askDir ? [] : ['--dir', dir];
   const code = await run([...dirArgs, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', pubkey, ...(secretsLeft ? [] : ['--token-env', 'PACK_KEY']), ...extra], {
     hostCtx: sandboxHosts(),
+    pathAdder: noPath,
     ...deps,
     env: env ?? { PACK_KEY: token },
     out: (l) => lines.push(l),
@@ -73,7 +74,7 @@ describe('installing both products', () => {
     assert.equal(conn.active, true);
     assert.equal(conn.config.baseUrl, 'http://127.0.0.1:3737');
     assert.match(conn.secrets.apiKey, /^[0-9a-f]{48}$/);
-    const launcher = fs.readFileSync(path.join(r.dir, process.platform === 'win32' ? 'start-engine.cmd' : 'start-engine.sh'), 'utf8');
+    const launcher = fs.readFileSync(path.join(r.dir, process.platform === 'win32' ? 'start-engine.vbs' : 'start-engine.sh'), 'utf8');
     assert.ok(launcher.includes(conn.secrets.apiKey), 'the engine starts with the same token the UI holds');
     assert.ok(!r.text.includes(conn.secrets.apiKey), 'the engine token is never printed');
   });
@@ -99,6 +100,9 @@ describe('installing both products', () => {
     const code = await run(['--dir', first.dir, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', cfg.pubkey, '--token-env', 'PACK_KEY', '--product', 'engine'], {
       env: { PACK_KEY: GOOD },
       out: () => {},
+      askFn: async () => '',
+      hostCtx: sandboxHosts(),
+      pathAdder: noPath,
     });
     assert.equal(code, 0);
     assert.ok(fs.existsSync(path.join(first.dir, 'engine', '2.0.0')));
@@ -240,15 +244,36 @@ describe('where to install', () => {
     const folderAt = r.lines.findIndex((l) => /Install folder/.test(l));
     const keyAt = r.lines.findIndex((l) => /access key/i.test(l));
     assert.ok(folderAt >= 0 && keyAt > folderAt, 'the folder is asked first, then the key');
-    assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0', 'app', 'server.mjs')));
+    assert.ok(fs.existsSync(path.join(r.dir, 'Echlon_Platforms', 'ui', '1.0.0', 'app', 'server.mjs')));
   });
 
-  it('takes the typed folder, creating it, and installs nowhere else', async () => {
+  it('takes the typed folder, creating it, and installs into an Echlon_Platforms folder inside it and nowhere else', async () => {
     const chosen = path.join(tmpDir(), 'new', 'place');
     const r = await install(['--product', 'engine'], { askDir: true, answers: [chosen], secrets: [GOOD] });
     assert.equal(r.code, 0, r.text);
-    assert.ok(fs.existsSync(path.join(chosen, 'engine', '2.0.0')));
+    assert.ok(fs.existsSync(path.join(chosen, 'Echlon_Platforms', 'engine', '2.0.0')));
+    assert.ok(!fs.existsSync(path.join(chosen, 'engine')), 'nothing is put in the chosen folder itself');
     assert.ok(!fs.existsSync(path.join(r.dir, 'engine')), 'the default folder was not used');
+    assert.ok(r.lines.some((l) => l.includes(`Installing into ${path.join(chosen, 'Echlon_Platforms')}`)));
+  });
+
+  it('does not nest the folder when the customer already named it', async () => {
+    const chosen = path.join(tmpDir(), 'Echlon_Platforms');
+    const r = await install(['--product', 'engine'], { askDir: true, answers: [chosen], secrets: [GOOD] });
+    assert.equal(r.code, 0, r.text);
+    assert.ok(fs.existsSync(path.join(chosen, 'engine', '2.0.0')));
+    assert.ok(!fs.existsSync(path.join(chosen, 'Echlon_Platforms')));
+  });
+
+  it('puts the folder name on a place however it is typed, and leaves --dir exact', async () => {
+    const { inPlatformsFolder } = await import('../installer/install.mjs');
+    assert.equal(inPlatformsFolder('/x/y', '/home/u'), path.resolve('/x/y/Echlon_Platforms'));
+    assert.equal(inPlatformsFolder('/x/y/', '/home/u'), path.resolve('/x/y/Echlon_Platforms'));
+    assert.equal(inPlatformsFolder('~/Projects', '/home/u'), path.resolve('/home/u/Projects/Echlon_Platforms'));
+    assert.equal(inPlatformsFolder('/x/echlon_platforms', '/home/u'), path.resolve('/x/echlon_platforms'), 'the name is matched without regard to case');
+    const exact = await install(['--product', 'engine']);
+    assert.ok(fs.existsSync(path.join(exact.dir, 'engine', '2.0.0')), '--dir is the folder itself');
+    assert.ok(!fs.existsSync(path.join(exact.dir, 'Echlon_Platforms')));
   });
 
   it('expands ~ to the home folder', async () => {

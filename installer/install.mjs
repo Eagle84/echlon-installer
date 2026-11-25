@@ -11,6 +11,7 @@ import { ServiceFeed, isLicenceKey } from './lib/service.mjs';
 import { installProduct } from './lib/product.mjs';
 import { createProgress } from './lib/progress.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
+import { addToPath } from './lib/pathenv.mjs';
 import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeLicenceKey, writeUiSettings } from './lib/wire.mjs';
 
 /**
@@ -47,7 +48,14 @@ export const targetOf = () => `${process.platform}-${process.arch}`;
 /** A typed folder as an absolute path; `~` means the home folder. */
 export const folderOf = (typed, home = os.homedir()) => path.resolve(/^~(?=$|[\\/])/.test(typed) ? path.join(home, typed.slice(1)) : typed);
 
-export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream, hostCtx, entryOf } = {}) {
+/** Everything Echlon installs lives in one folder of this name, inside whatever place the customer picks. */
+export const PLATFORMS_DIR = 'Echlon_Platforms';
+export const inPlatformsFolder = (typed, home = os.homedir()) => {
+  const dir = folderOf(typed, home);
+  return path.basename(dir).toLowerCase() === PLATFORMS_DIR.toLowerCase() ? dir : path.join(dir, PLATFORMS_DIR);
+};
+
+export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream, hostCtx, entryOf, pathAdder = addToPath } = {}) {
   const major = Number(process.versions.node.split('.')[0]);
   if (major < MIN_NODE) throw new PackError(`Node ${MIN_NODE} or newer is needed (this is ${process.versions.node}).`);
 
@@ -72,11 +80,12 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   const connect = parseConnect(args.connect, HOSTS.map((h) => h.id));
 
   // Where to install comes before the key: nothing is asked of GitHub until the customer has said where it goes.
+  // A place typed at the prompt gets the Echlon_Platforms folder inside it; --dir names the folder itself, exactly.
   let dir = args.dir;
   if (!dir) {
-    const fallback = path.join(os.homedir(), 'Echlon');
-    const typed = await askFn(`Install folder (Enter for ${fallback}): `);
-    dir = typed || fallback;
+    const fallback = path.join(os.homedir(), PLATFORMS_DIR);
+    const typed = await askFn(`Install folder (Enter for ${fallback}; Echlon goes in a folder named ${PLATFORMS_DIR} inside the one you give): `);
+    dir = typed ? inPlatformsFolder(typed) : fallback;
   }
   dir = folderOf(dir);
   checkInstallDir(dir);
@@ -131,6 +140,16 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     const e = installed.engine;
     const launcher = writeLauncher(dir, engineLauncher({ platform, installDir: dir, exeRelative: path.join('engine', e.version, e.exe ?? e.file), token: engineToken }));
     out(`Start the engine with: ${launcher}`);
+    out(platform === 'win32' ? 'It runs in the background, with no window; stop-engine.cmd stops it and engine.log records what it did.' : 'Stop it with Ctrl+C.');
+    out(`Open an operator session (Claude Code with only the Echlon tools) with: ${path.join(dir, platform === 'win32' ? 'echlon-op.cmd' : 'echlon-op')}`);
+    const wantPath = args.yes ? true : ((await askFn('Make echlon-op available from any terminal? (Y/n): ')) || 'y').toLowerCase().startsWith('y');
+    if (wantPath) {
+      try {
+        out(pathAdder({ dir }));
+      } catch (err) {
+        out(`Could not change your PATH (${String(err.message).split('\n')[0]}). Run echlon-op from ${dir}.`);
+      }
+    }
     // A licensed engine renews its licence with the customer's key and stops serving when it ends; it looks for the key
     // beside its program. Same rule as the UI: only a licensed package, only a licence key, owner-only, never printed.
     if (e.pack?.licensed && isLicenceKey(keys.engine)) {

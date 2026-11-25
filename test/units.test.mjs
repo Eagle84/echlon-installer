@@ -140,14 +140,28 @@ describe('what is written for the customer', () => {
   it('writes a start script per platform that sets the token and starts the right thing', () => {
     const win = engineLauncher({ platform: 'win32', installDir: 'C:\\E', exeRelative: 'engine\\1\\echlon.exe', token: 'tok' });
     assert.equal(win.name, 'start-engine.cmd');
-    assert.match(win.text, /set "ECHLON_MCP_TOKEN=tok"/);
-    assert.match(win.text, /echlon\.exe" --http/);
+    const extra = (set, name) => set.extras.find((x) => x.name === name)?.text;
+    // Windows runs the engine with no window: the start script only hands over, and the token lives in the launcher it starts.
+    assert.match(win.text, /wscript\.exe \/\/nologo "%~dp0start-engine\.vbs"/);
+    assert.ok(!win.text.includes('tok'), 'the visible start script does not hold the token');
+    assert.match(extra(win, 'start-engine.vbs'), /\("ECHLON_MCP_TOKEN"\) = "tok"/);
+    assert.match(extra(win, 'start-engine.vbs'), /\.Run .*, 0, False/, 'window style 0 is hidden');
+    assert.match(extra(win, 'start-engine.vbs'), /echlon\.exe" & q & " --http >> " & q & "C:\\E\\engine\.log"/);
+    assert.match(extra(win, 'stop-engine.cmd'), /\$_\.Name -eq 'echlon\.exe' -and \$_\.CommandLine -match '--http'/, 'only the engine started with --http is stopped, never one an AI tool started');
+    assert.match(extra(win, 'echlon-op.cmd'), /echlon\.exe" op %\*/);
     const nix = engineLauncher({ platform: 'linux', installDir: "/o'b", exeRelative: 'engine/1/echlon', token: 'tok' });
     assert.equal(nix.name, 'start-engine.sh');
     assert.match(nix.text, /^#!\/bin\/sh/);
     assert.match(nix.text, /ECHLON_MCP_TOKEN='tok'/);
     assert.ok(nix.text.includes(`exec ${shq(path.posix.join("/o'b", 'engine/1/echlon'))} --http`));
     assert.ok(nix.text.includes(`'\\''`), 'the single quote in the folder name is closed, escaped and reopened');
+    assert.ok(extra(nix, 'echlon-op').includes(`exec ${shq(path.posix.join("/o'b", 'engine/1/echlon'))} op "$@"`));
+  });
+
+  it('keeps the engine token out of every file but the one that starts the engine', () => {
+    const win = engineLauncher({ platform: 'win32', installDir: 'C:\\E', exeRelative: 'engine\\1\\echlon.exe', token: 'SECRETTOKEN' });
+    const holders = [win, ...win.extras].filter((f) => f.text.includes('SECRETTOKEN')).map((f) => f.name);
+    assert.deepEqual(holders, ['start-engine.vbs']);
   });
 
   it('starts the UI with its data kept outside the versioned folder, so an update keeps it', () => {

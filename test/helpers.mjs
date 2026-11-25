@@ -243,6 +243,9 @@ export async function startService({ licences, repos, unavailable = false, tampe
  * A stand-in for this computer's AI tools: an empty home folder, no tool on PATH, and no command that can run.
  * Anything that reached for the real home folder would be writing to the person running the tests.
  */
+/** Stands in for putting the install folder on the PATH, which a test must never do to the machine it runs on. */
+export const noPath = () => 'PATH left alone (test)';
+
 export function sandboxHosts(overrides = {}) {
   const home = tmpDir('echlon-home-');
   return {
