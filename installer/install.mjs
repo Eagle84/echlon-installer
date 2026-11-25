@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PackError } from './lib/errors.mjs';
 import { Feed, GITHUB_API } from './lib/feed.mjs';
+import { offerConnections, parseConnect } from './lib/connect.mjs';
+import { HOSTS, defaultContext } from './lib/hosts.mjs';
 import { ServiceFeed, isLicenceKey } from './lib/service.mjs';
 import { installProduct } from './lib/product.mjs';
 import { createProgress } from './lib/progress.mjs';
@@ -28,7 +30,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes') out.yes = true;
-    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey', '--service'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
+    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey', '--service', '--connect'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
     else throw new PackError(`Unknown option ${a}.`);
   }
   return out;
@@ -45,7 +47,7 @@ export const targetOf = () => `${process.platform}-${process.arch}`;
 /** A typed folder as an absolute path; `~` means the home folder. */
 export const folderOf = (typed, home = os.homedir()) => path.resolve(/^~(?=$|[\\/])/.test(typed) ? path.join(home, typed.slice(1)) : typed);
 
-export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream } = {}) {
+export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream, hostCtx, entryOf } = {}) {
   const major = Number(process.versions.node.split('.')[0]);
   if (major < MIN_NODE) throw new PackError(`Node ${MIN_NODE} or newer is needed (this is ${process.versions.node}).`);
 
@@ -67,6 +69,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   }
   if (!['ui', 'engine', 'both'].includes(choice)) throw new PackError('The product must be ui, engine or both.');
   const wanted = choice === 'both' ? ['ui', 'engine'] : [choice];
+  const connect = parseConnect(args.connect, HOSTS.map((h) => h.id));
 
   // Where to install comes before the key: nothing is asked of GitHub until the customer has said where it goes.
   let dir = args.dir;
@@ -141,6 +144,10 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
       out(`The UI is in ${u.dest}.`);
     }
     if (engineToken) out('The UI is set up to use the engine.');
+  }
+  if (installed.engine && connect !== 'none') {
+    const e = installed.engine;
+    await offerConnections({ exe: path.join(dir, 'engine', e.version, e.file), choice: connect, yes: args.yes, ctx: hostCtx ?? defaultContext(), out, askFn, entryOf });
   }
   for (const f of failures) out(`Not installed - ${f}`);
   if (failures.length === wanted.length) out('Nothing was installed.');

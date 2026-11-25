@@ -229,3 +229,21 @@ export async function startService({ licences, repos, unavailable = false, tampe
     close: () => Promise.all([new Promise((r) => service.close(r)), new Promise((r) => storage.close(r))]),
   };
 }
+
+/**
+ * A stand-in for this computer's AI tools: an empty home folder, no tool on PATH, and no command that can run.
+ * Anything that reached for the real home folder would be writing to the person running the tests.
+ */
+export function sandboxHosts(overrides = {}) {
+  const home = tmpDir('echlon-home-');
+  return {
+    platform: process.platform,
+    env: { PATH: '' },
+    home,
+    appdata: path.join(home, 'AppData', 'Roaming'),
+    which: () => undefined,
+    exec: async () => ({ code: 1, out: 'no commands run in tests' }),
+    now: () => new Date('2026-11-25T12:00:00Z'),
+    ...overrides,
+  };
+}
