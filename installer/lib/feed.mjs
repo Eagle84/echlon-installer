@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { saveBody } from './download.mjs';
 import { PackError } from './errors.mjs';
 
 export const GITHUB_API = 'https://api.github.com';
@@ -50,7 +48,7 @@ export class Feed {
     }
     if (res.status === 401) throw new PackError('The access key was not accepted. Check it and try again.');
     // GitHub answers 404, not 403, for a private repository the key cannot see.
-    if (res.status === 404) throw new PackError(`This key does not include ${what}.`);
+    if (res.status === 404) throw new PackError(`This key does not include ${what}, or no release of it has been published yet.`);
     if (res.status === 403 || res.status === 429) throw new PackError('GitHub refused the request (a limit was reached, or the key has no access). Wait a few minutes and try again.');
     if (!res.ok) throw new PackError(`GitHub answered with an error (HTTP ${res.status}).`);
     return res;
@@ -64,6 +62,22 @@ export class Feed {
     return { tag: body.tag_name, assets: body.assets.map((a) => ({ id: a.id, name: a.name, size: a.size, url: a.url })) };
   }
 
+  /** The newest release of a product, as the installer reads one: its signed manifest and a way to fetch a named file. */
+  async release({ def, target }) {
+    const release = await this.latest(def.repo, def.name);
+    const manifestName = def.manifest.replace('{target}', target);
+    const manifestAsset = release.assets.find((a) => a.name === manifestName);
+    if (!manifestAsset) throw new PackError(`No build of ${def.name} for this computer (${target}) has been published yet.`);
+    const manifest = await this.json(manifestAsset, def.name);
+    return {
+      manifest,
+      artifactFor: (name) => {
+        const asset = release.assets.find((a) => a.name === name);
+        return asset ? { save: (file, onProgress) => this.download(asset, file, def.name, onProgress) } : null;
+      },
+    };
+  }
+
   async json(asset, what) {
     const res = await this.request(asset.url, 'application/octet-stream', what);
     try {
@@ -73,9 +87,9 @@ export class Feed {
     }
   }
 
-  async download(asset, destFile, what) {
+  async download(asset, destFile, what, onProgress) {
     const res = await this.request(asset.url, 'application/octet-stream', what);
     if (!res.body) throw new PackError('The download was empty.');
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(destFile));
+    await saveBody(res, destFile, onProgress, asset.size);
   }
 }

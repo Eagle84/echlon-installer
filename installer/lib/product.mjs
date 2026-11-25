@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { PackError } from './errors.mjs';
 import { sha256OfFile, verifyManifest } from './verify.mjs';
+import { quietProgress } from './progress.mjs';
+import { checkNode, checkPostInstall, runStep } from './setup.mjs';
 import { extractZip } from './zip.mjs';
 
 /** The file name a release points at: the last part of its url. */
@@ -22,21 +24,23 @@ export function assetNameOf(url) {
  * artifact, check it is the one that was signed, and only then unpack it. Anything that fails leaves the
  * installed version exactly as it was.
  */
-export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {} }) {
-  const release = await feed.latest(def.repo, def.name);
-  const manifestName = def.manifest.replace('{target}', target);
-  const manifestAsset = release.assets.find((a) => a.name === manifestName);
-  if (!manifestAsset) throw new PackError(`No build of ${def.name} for this computer (${target}) has been published yet.`);
+export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {}, nodeMajor, runCommand = runStep, progress = quietProgress }) {
+  log(`Checking your key for ${def.name}`);
+  const { manifest, artifactFor } = await feed.release({ id, def, target });
 
-  const signed = verifyManifest(await feed.json(manifestAsset, def.name), pubkey);
+  const signed = verifyManifest(manifest, pubkey);
   const artifactName = assetNameOf(signed.url);
-  const artifact = release.assets.find((a) => a.name === artifactName);
+  const artifact = artifactFor(artifactName);
   if (!artifact) throw new PackError(`The release for ${def.name} names a file that is not in it (${artifactName}).`);
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'echlon-pack-'));
   try {
     const file = path.join(work, artifactName);
-    await feed.download(artifact, file, def.name);
+    log(`Downloading ${def.name} ${signed.version}`);
+    const bar = progress.start(`${def.name} ${signed.version}`);
+    await artifact.save(file, bar.update);
+    bar.finish();
+    log('Checking the download is exactly what Echlon signed');
     const actual = await sha256OfFile(file);
     if (actual !== signed.sha256.toLowerCase()) {
       throw new PackError(`The download of ${def.name} does not match what was signed, so it was not installed. Nothing was changed.`);
@@ -50,9 +54,15 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
 
     let pack = null;
     if (artifactName.toLowerCase().endsWith('.zip')) {
+      log(`Unpacking ${def.name}`);
       extractZip(file, staging);
       const manifestFile = path.join(staging, 'echlon-pack.json');
       if (fs.existsSync(manifestFile)) pack = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+      if (pack) {
+        checkNode(pack.requires, nodeMajor, def.name);
+        const steps = checkPostInstall(pack.postInstall);
+        for (const step of steps) await progress.working(`Setting up ${def.name} (installing its dependencies; this can take a few minutes)`, Promise.resolve(runCommand(step, staging)));
+      }
     } else {
       fs.copyFileSync(file, path.join(staging, artifactName));
       if (process.platform !== 'win32') fs.chmodSync(path.join(staging, artifactName), 0o755);
@@ -64,6 +74,7 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
     log(`Installed ${def.name} ${signed.version}`);
     return { version: signed.version, dest, file: artifactName, kind: pack ? 'package' : 'file', pack };
   } finally {
+    fs.rmSync(`${path.join(dir, id, signed.version)}.partial`, { recursive: true, force: true });
     fs.rmSync(work, { recursive: true, force: true });
   }
 }

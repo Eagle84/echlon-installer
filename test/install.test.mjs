@@ -14,21 +14,26 @@ const keys = newKeys();
 let mock;
 let cfg;
 
-async function install(extra = [], { token = GOOD, feeds = buildFeeds({ privateKey: keys.privateKey, target: TARGET }), pubkey = cfg.pubkey, answers = [] } = {}) {
+async function install(extra = [], { token = GOOD, feeds = buildFeeds({ privateKey: keys.privateKey, target: TARGET }), pubkey = cfg.pubkey, answers = [], env, secrets, askDir = false, deps = {}, tokens = { [GOOD]: ['example/ui', 'example/engine'], [UI_ONLY]: ['example/ui'] } } = {}) {
   const dir = tmpDir();
+  const secretsLeft = secrets ? [...secrets] : undefined;
   mock?.close && (await mock.close());
-  mock = await startMock({ tokens: { [GOOD]: ['example/ui', 'example/engine'], [UI_ONLY]: ['example/ui'] }, repos: feeds });
+  mock = await startMock({ tokens, repos: feeds });
   const lines = [];
-  const asked = [...answers];
-  const code = await run(['--dir', dir, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', pubkey, '--token-env', 'PACK_KEY', ...extra], {
-    env: { PACK_KEY: token },
+  const asked = answers.map((a) => (a === '@DIR' ? dir : a));
+  const dirArgs = askDir ? [] : ['--dir', dir];
+  const code = await run([...dirArgs, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', pubkey, ...(secretsLeft ? [] : ['--token-env', 'PACK_KEY']), ...extra], {
+    ...deps,
+    env: env ?? { PACK_KEY: token },
     out: (l) => lines.push(l),
     askFn: async (q) => {
       lines.push(q);
       return asked.shift() ?? '';
     },
-    askSecret: async () => {
-      throw new Error('the key must come from the environment in these tests');
+    askSecret: async (q) => {
+      if (!secretsLeft) throw new Error('the key must come from the environment in these tests');
+      lines.push(q);
+      return secretsLeft.shift() ?? '';
     },
   }).catch((e) => {
     if (e instanceof PackError) {
@@ -124,7 +129,7 @@ describe('a key that does not include everything', () => {
     assert.equal(r.code, 1);
     assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
     assert.ok(!fs.existsSync(path.join(r.dir, 'engine')));
-    assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine\./);
+    assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine, or no release of it has been published yet\./);
     const settings = path.join(r.dir, 'ui', 'data', 'echlon.settings.json');
     assert.ok(!fs.existsSync(settings), 'no engine connection is written for an engine that is not there');
   });
@@ -224,5 +229,165 @@ describe('where the key may go', () => {
       () => run(['--dir', tmpDir(), '--api', 'http://example.com', '--product', 'ui', '--token-env', 'PACK_KEY', '--products', cfg.products, '--pubkey', cfg.pubkey], { env: { PACK_KEY: GOOD }, out: () => {} }),
       /only ever sent to api\.github\.com/,
     );
+  });
+});
+
+describe('where to install', () => {
+  it('asks for the folder before it asks for a key or touches GitHub', async () => {
+    const r = await install(['--product', 'ui'], { askDir: true, answers: ['@DIR'], secrets: [GOOD] });
+    assert.equal(r.code, 0, r.text);
+    const folderAt = r.lines.findIndex((l) => /Install folder/.test(l));
+    const keyAt = r.lines.findIndex((l) => /access key/i.test(l));
+    assert.ok(folderAt >= 0 && keyAt > folderAt, 'the folder is asked first, then the key');
+    assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0', 'app', 'server.mjs')));
+  });
+
+  it('takes the typed folder, creating it, and installs nowhere else', async () => {
+    const chosen = path.join(tmpDir(), 'new', 'place');
+    const r = await install(['--product', 'engine'], { askDir: true, answers: [chosen], secrets: [GOOD] });
+    assert.equal(r.code, 0, r.text);
+    assert.ok(fs.existsSync(path.join(chosen, 'engine', '2.0.0')));
+    assert.ok(!fs.existsSync(path.join(r.dir, 'engine')), 'the default folder was not used');
+  });
+
+  it('expands ~ to the home folder', async () => {
+    const { folderOf } = await import('../installer/install.mjs');
+    assert.equal(folderOf('~/Echlon', '/home/x'), path.resolve('/home/x/Echlon'));
+    assert.equal(folderOf('~', '/home/x'), path.resolve('/home/x'));
+    assert.equal(folderOf('~other', '/home/x'), path.resolve('~other'));
+  });
+});
+
+describe('access keys', () => {
+  const ENGINE_ONLY = 'ghp_engineonly_000000000000000000';
+
+  it('asks once when one key covers both products, and uses it for each', async () => {
+    const r = await install(['--product', 'both'], { secrets: [GOOD], answers: ['y'] });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(r.lines.filter((l) => /access key: /i.test(l)).length, 1);
+    assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')) && fs.existsSync(path.join(r.dir, 'engine', '2.0.0')));
+  });
+
+  it('treats Enter as yes to one key for both', async () => {
+    const r = await install(['--product', 'both'], { secrets: [GOOD], answers: [''] });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(r.lines.filter((l) => /access key: /i.test(l)).length, 1);
+  });
+
+  it('asks for a key per product when they are separate, and each product is fetched with its own', async () => {
+    const r = await install(['--product', 'both'], {
+      secrets: [UI_ONLY, ENGINE_ONLY],
+      answers: ['n'],
+      tokens: { [UI_ONLY]: ['example/ui'], [ENGINE_ONLY]: ['example/engine'] },
+    });
+    assert.equal(r.code, 0, r.text);
+    assert.match(r.text, /Echlon UI access key/);
+    assert.match(r.text, /Echlon Engine access key/);
+    const used = new Set(mock.log.api.map((e) => e.authorization));
+    assert.deepEqual([...used].sort(), [`Bearer ${ENGINE_ONLY}`, `Bearer ${UI_ONLY}`].sort());
+    assert.ok(!r.text.includes(UI_ONLY) && !r.text.includes(ENGINE_ONLY));
+  });
+
+  it('installs the product a key covers and says which one it does not', async () => {
+    const r = await install(['--product', 'both'], { secrets: [UI_ONLY], answers: ['y'] });
+    assert.equal(r.code, 1);
+    assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
+    assert.ok(!fs.existsSync(path.join(r.dir, 'engine')));
+    assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine/);
+    assert.ok(!/Nothing was installed/.test(r.text), 'something was installed, so it does not say nothing was');
+  });
+
+  it('takes a key per product from the environment, without asking', async () => {
+    const r = await install(['--product', 'both', '--ui-key-env', 'UI_KEY', '--engine-key-env', 'ENG_KEY'], {
+      env: { UI_KEY: UI_ONLY, ENG_KEY: ENGINE_ONLY },
+      tokens: { [UI_ONLY]: ['example/ui'], [ENGINE_ONLY]: ['example/engine'] },
+    });
+    assert.equal(r.code, 0, r.text);
+  });
+
+  it('ends with a plain line saying nothing was installed when every product failed', async () => {
+    const r = await install(['--product', 'both'], { token: 'ghp_wrong_000000000000000000000' });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /Nothing was installed\./);
+  });
+
+  it('ends with Done when everything installed', async () => {
+    const r = await install(['--product', 'ui']);
+    assert.match(r.text, /Done\./);
+  });
+
+  it('refuses to go on without a key, before asking GitHub anything', async () => {
+    const r = await install(['--product', 'ui'], { secrets: [''] });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /access key is needed for Echlon UI/);
+    assert.equal(mock.log.api.length, 0);
+  });
+});
+
+describe('setting a package up', () => {
+  const withPack = (pack) =>
+    buildFeeds({
+      privateKey: keys.privateKey,
+      target: TARGET,
+      uiFiles: {
+        'echlon-pack.json': JSON.stringify({ name: 'ui', start: { win32: 'start.cmd', posix: 'start.sh' }, ...pack }),
+        'start.cmd': '@echo off\r\n',
+        'start.sh': '#!/bin/sh\n',
+        'app/server.mjs': 'x\n',
+      },
+    });
+  const NPM_CI = ['npm', 'ci', '--omit=dev', '--no-audit', '--no-fund'];
+
+  it('runs the package setup step inside the unpacked folder, before it is put in place', async () => {
+    const calls = [];
+    const r = await install(['--product', 'ui'], {
+      feeds: withPack({ postInstall: [NPM_CI] }),
+      deps: { runCommand: (step, cwd) => calls.push({ step, cwd, finalExists: fs.existsSync(cwd.replace(/\.partial$/, '')) }) },
+    });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].step, NPM_CI);
+    assert.match(calls[0].cwd, /1\.0\.0\.partial$/);
+    assert.equal(calls[0].finalExists, false, 'it ran before the version was moved into place');
+    assert.match(r.text, /Setting up Echlon UI/);
+  });
+
+  it('refuses any other command, and installs nothing', async () => {
+    for (const bad of [['powershell', '-c', 'calc'], ['npm', 'install', 'left-pad'], ['npm', 'ci', '--foo'], 'npm ci']) {
+      const calls = [];
+      const r = await install(['--product', 'ui'], { feeds: withPack({ postInstall: [bad] }), deps: { runCommand: (s) => calls.push(s) } });
+      assert.equal(r.code, 1, String(bad));
+      assert.match(r.text, /does not run/);
+      assert.equal(calls.length, 0);
+      assert.ok(!fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
+      assert.ok(!fs.existsSync(path.join(r.dir, 'ui', '1.0.0.partial')));
+    }
+  });
+
+  it('leaves the folder as it was when the setup step fails', async () => {
+    const r = await install(['--product', 'ui'], {
+      feeds: withPack({ postInstall: [NPM_CI] }),
+      deps: {
+        runCommand: () => {
+          throw new PackError('Setting up the program failed.');
+        },
+      },
+    });
+    assert.equal(r.code, 1);
+    assert.ok(!fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
+    assert.ok(!fs.existsSync(path.join(r.dir, 'ui', '1.0.0.partial')), 'the half-built folder is removed');
+    assert.ok(!fs.existsSync(path.join(r.dir, 'ui', 'current.json')));
+  });
+
+  it('refuses a package that needs a newer Node than this computer has', async () => {
+    const r = await install(['--product', 'ui'], { feeds: withPack({ requires: { node: 22 } }), deps: { nodeMajor: 20 } });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /needs Node 22 or newer, and this computer has Node 20/);
+    assert.ok(!fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
+  });
+
+  it('goes ahead when Node is new enough', async () => {
+    const r = await install(['--product', 'ui'], { feeds: withPack({ requires: { node: 22 } }), deps: { nodeMajor: 22 } });
+    assert.equal(r.code, 0, r.text);
   });
 });
