@@ -1,0 +1,46 @@
+name: Release installer
+
+# Publishes the installer as one zip on this repository's Releases page. Its address never changes:
+#   https://github.com/Eagle84/echlon-installer/releases/latest/download/echlon-installer.zip
+# so a link on the website can point at it and always give the newest.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test
+        run: npm test
+
+      - name: Refuse to publish without the real release key
+        run: |
+          if grep -q REPLACE_WITH_RELEASE_PUBKEY release-pubkey.txt; then
+            echo "release-pubkey.txt still holds the placeholder. An installer built now would refuse every release."
+            exit 1
+          fi
+
+      - name: Build the zip
+        run: |
+          chmod +x install.sh
+          zip -r echlon-installer.zip install.bat install.ps1 install.sh installer products.json service.txt release-pubkey.txt runtime.txt README.md
+          unzip -l echlon-installer.zip
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" echlon-installer.zip \
+            --title "Echlon installer $GITHUB_REF_NAME" \
+            --notes "Unzip, then run install.bat (Windows) or install.sh (Linux). You will need the licence key Echlon gave you."

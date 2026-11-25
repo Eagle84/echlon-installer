@@ -43,6 +43,18 @@ function writePrivate(file, text) {
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
 }
 
+/**
+ * The customer's licence key, kept where the UI reads it, so it can renew its licence and lock itself when the
+ * licence ends. It is the one place the installer keeps the key: only for a package that says it is licensed,
+ * owner-only, inside the data folder (so an update keeps it), and never printed.
+ */
+export function writeLicenceKey(dataDir, key) {
+  const file = path.join(dataDir, 'licence.key');
+  writePrivate(file, `${key}
+`);
+  return file;
+}
+
 export function writeUiSettings(dataDir, token) {
   const file = path.join(dataDir, 'echlon.settings.json');
   let current = {};
@@ -58,37 +70,67 @@ export function writeUiSettings(dataDir, token) {
   return file;
 }
 
-/** The script that starts the engine with its token, for the platform it was installed on. */
+/**
+ * The scripts that run the engine, for the platform it was installed on.
+ *
+ * `name`/`text` is the one a person starts the engine with. `extras` are the others written beside it: on Windows the
+ * engine runs with no window (a console that must stay open is not a service), so the start script hands over to a
+ * hidden launcher that holds the token and logs to engine.log, and there is a stop script; on both, `echlon-op`
+ * opens the operator session. Only a process started with --http is stopped by the stop script, because the same
+ * program is also what an AI tool launches for itself.
+ */
 export function engineLauncher({ platform, installDir, exeRelative, token }) {
-  const exe = path.join(installDir, exeRelative);
+  const exe = (platform === 'win32' ? path.win32 : path.posix).join(installDir, exeRelative);
   if (platform === 'win32') {
+    const log = path.win32.join(installDir, 'engine.log');
+    const image = path.win32.basename(exe);
     return {
       name: 'start-engine.cmd',
-      text: `@echo off\r\nrem Starts the Echlon Engine on 127.0.0.1:3737. Keep this file private: it holds the engine's access token.\r\nset "ECHLON_MCP_TOKEN=${token}"\r\n"${exe}" --http\r\n`,
+      text: `@echo off\r\nrem Starts the Echlon Engine on 127.0.0.1:3737 in the background, with no window. Output goes to engine.log.\r\nwscript.exe //nologo "%~dp0start-engine.vbs"\r\n`,
+      extras: [
+        {
+          name: 'start-engine.vbs',
+          text: `' Starts the Echlon Engine with no window. Keep this file private: it holds the engine's access token.\r\nSet shell = CreateObject("WScript.Shell")\r\nq = Chr(34)\r\nshell.Environment("Process")("ECHLON_MCP_TOKEN") = "${token}"\r\nshell.Run "cmd /c " & q & q & "${exe}" & q & " --http >> " & q & "${log}" & q & " 2>&1" & q, 0, False\r\n`,
+        },
+        {
+          name: 'stop-engine.cmd',
+          text: `@echo off\r\nrem Stops the Echlon Engine started by start-engine.cmd. An engine an AI tool started for itself is left alone.\r\npowershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq '${image}' -and $_.CommandLine -match '--http' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"\r\n`,
+        },
+        { name: 'echlon-op.cmd', text: `@echo off\r\nrem Opens an operator session: Claude Code holding only the Echlon tools.\r\n"${exe}" op %*\r\n` },
+      ],
     };
   }
   return {
     name: 'start-engine.sh',
     text: `#!/bin/sh\n# Starts the Echlon Engine on 127.0.0.1:3737. Keep this file private: it holds the engine's access token.\nECHLON_MCP_TOKEN=${shq(token)}\nexport ECHLON_MCP_TOKEN\nexec ${shq(exe)} --http\n`,
+    extras: [{ name: 'echlon-op', text: `#!/bin/sh\n# Opens an operator session: Claude Code holding only the Echlon tools.\nexec ${shq(exe)} op "$@"\n` }],
   };
 }
 
 /** The script that starts the UI from its installed folder, with its data kept outside the versioned folder so an update keeps it. */
-export function uiLauncher({ platform, versionDir, startRelative, dataDir }) {
-  const start = path.join(versionDir, startRelative);
+export function uiLauncher({ platform, versionDir, startRelative, dataDir, binDir }) {
+  const start = (platform === 'win32' ? path.win32 : path.posix).join(versionDir, startRelative);
   if (platform === 'win32') {
+    // `binDir` is the folder of the Node Echlon downloaded for it, when this computer's own was too old: it goes first.
+    const node = binDir ? `rem The Node Echlon downloaded for it comes first.\r\nset "PATH=${binDir};%PATH%"\r\n` : '';
     return {
       name: 'start-ui.cmd',
-      text: `@echo off\r\nrem Starts the Echlon UI.\r\nset "ECHLON_DATA_DIR=${dataDir}"\r\ncd /d "${versionDir}"\r\ncall "${start}"\r\n`,
+      text: `@echo off\r\nrem Starts the Echlon UI.\r\n${node}set "ECHLON_DATA_DIR=${dataDir}"\r\ncd /d "${versionDir}"\r\ncall "${start}"\r\n`,
     };
   }
+  const node = binDir ? `# The Node Echlon downloaded for it comes first.\nPATH=${shq(binDir)}:"$PATH"\nexport PATH\n` : '';
   return {
     name: 'start-ui.sh',
-    text: `#!/bin/sh\n# Starts the Echlon UI.\nECHLON_DATA_DIR=${shq(dataDir)}\nexport ECHLON_DATA_DIR\ncd ${shq(versionDir)} || exit 1\nexec ${shq(start)}\n`,
+    text: `#!/bin/sh\n# Starts the Echlon UI.\n${node}ECHLON_DATA_DIR=${shq(dataDir)}\nexport ECHLON_DATA_DIR\ncd ${shq(versionDir)} || exit 1\nexec ${shq(start)}\n`,
   };
 }
 
 export function writeLauncher(installDir, launcher) {
+  for (const extra of launcher.extras ?? []) {
+    const f = path.join(installDir, extra.name);
+    writePrivate(f, extra.text);
+    if (process.platform !== 'win32') fs.chmodSync(f, 0o700);
+  }
   const file = path.join(installDir, launcher.name);
   writePrivate(file, launcher.text);
   if (process.platform !== 'win32') fs.chmodSync(file, 0o700);

@@ -4,6 +4,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
+import { newContentKey, sealFile, sealedMeta, signedText } from '../installer/lib/sealed.mjs';
+
+/**
+ * What a manifest carries for the wrapped key. The installer never unwraps it (the licence service does, and gives the
+ * installer the key), so a stand-in with the right shape is all these tests need. That also keeps them runnable on any
+ * Node: making a real one needs ML-KEM, which only recent Node has, and the installer must run on older ones.
+ */
+const STAND_IN_WRAP = { kem: 'ml-kem-768', ct: 'AAAA', iv: 'AAAA', tag: 'AAAA', data: 'AAAA' };
 
 /** A small zip writer, so tests build real archives with real headers. */
 const TABLE = (() => {
@@ -179,4 +187,131 @@ export function walk(dir) {
     else out.push(p);
   }
   return out;
+}
+
+/**
+ * A stand-in for the Echlon download service. It follows the contract of `POST /v1/download` in the engine
+ * repo: 403 `{state}` for a key that may not have the product, otherwise the signed manifest and a short-lived
+ * address for the file on a separate storage host, which must be fetched with no credential.
+ */
+export async function startService({ licences, repos, unavailable = false, tamperArtifactName = false, contentKeys = {}, withholdKey = false, wrongKey = false }) {
+  const log = { service: [], storage: [] };
+  const assets = Object.values(repos).flatMap((r) => r.assets);
+  const storage = http.createServer((req, res) => {
+    log.storage.push({ url: req.url, authorization: req.headers.authorization });
+    const asset = assets.find((a) => `/dl/${a.id}` === req.url.split('?')[0]);
+    if (!asset) return res.writeHead(404).end();
+    res.writeHead(200).end(asset.body);
+  });
+  await new Promise((r) => storage.listen(0, '127.0.0.1', r));
+  const storageBase = `http://127.0.0.1:${storage.address().port}`;
+  const feeds = { ui: { repo: 'example/ui', manifest: () => 'latest-ui.json' }, engine: { repo: 'example/engine', manifest: (t) => `latest-${t}.json` } };
+
+  const service = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      log.service.push({ url: req.url, method: req.method, body });
+      const send = (code, obj) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));
+      if (req.url !== '/v1/download' || req.method !== 'POST') return send(404, {});
+      if (unavailable) return send(503, { error: 'x' });
+      const licence = licences[body.key];
+      if (!licence) return send(403, { state: 'unknown' });
+      if (licence.state) return send(403, { state: licence.state });
+      if (!licence.products.includes(body.product)) return send(403, { state: 'product' });
+      const feed = feeds[body.product];
+      const repo = repos[feed.repo];
+      const manifest = repo.assets.find((a) => a.name === feed.manifest(body.target ?? ''));
+      if (!manifest) return send(404, { error: 'no release' });
+      const parsed = JSON.parse(manifest.body.toString());
+      const name = decodeURIComponent(parsed.release.url.split('/').pop());
+      const artifact = repo.assets.find((a) => a.name === name);
+      const key = parsed.release.sealed && !withholdKey ? (wrongKey ? Buffer.alloc(32, 9) : contentKeys[body.product]) : undefined;
+      send(200, { product: body.product, version: parsed.release.version, manifest: parsed, artifact: { name: tamperArtifactName ? 'other.zip' : artifact.name, size: artifact.body.length, url: `${storageBase}/dl/${artifact.id}?sig=short-lived` }, ...(key ? { contentKey: key.toString('base64') } : {}) });
+    });
+  });
+  await new Promise((r) => service.listen(0, '127.0.0.1', r));
+  return {
+    base: `http://127.0.0.1:${service.address().port}`,
+    log,
+    close: () => Promise.all([new Promise((r) => service.close(r)), new Promise((r) => storage.close(r))]),
+  };
+}
+
+/**
+ * A stand-in for this computer's AI tools: an empty home folder, no tool on PATH, and no command that can run.
+ * Anything that reached for the real home folder would be writing to the person running the tests.
+ */
+/** Stands in for looking at this computer (a port, Claude Code, free space): nothing is busy, nothing is missing. */
+export const calm = { which: () => '/usr/bin/claude', portFree: async () => true, statfs: () => ({ bavail: 1e9, bsize: 4096 }) };
+
+/** Stands in for putting the install folder on the PATH, which a test must never do to the machine it runs on. */
+export const noPath = () => 'PATH left alone (test)';
+
+export function sandboxHosts(overrides = {}) {
+  const home = tmpDir('echlon-home-');
+  return {
+    platform: process.platform,
+    env: { PATH: '' },
+    home,
+    appdata: path.join(home, 'AppData', 'Roaming'),
+    which: () => undefined,
+    exec: async () => ({ code: 1, out: 'no commands run in tests' }),
+    now: () => new Date('2026-11-25T12:00:00Z'),
+    ...overrides,
+  };
+}
+
+/**
+ * A release published the way the release script does: the artifact encrypted, its key wrapped to a content key
+ * pair, the manifest signed over the sealing details. `damage` makes the one thing a test wants to be wrong.
+ */
+export async function sealedRelease({ product, version, plainName, plainBody, assetName, manifestName, privateKey, damage = {} }) {
+  const work = tmpDir('echlon-seal-');
+  const plainFile = path.join(work, plainName);
+  fs.writeFileSync(plainFile, plainBody);
+  const sealedFile = path.join(work, assetName);
+  const cek = newContentKey();
+  const made = await sealFile(plainFile, sealedFile, cek, { chunk: 4096 });
+  let body = fs.readFileSync(sealedFile);
+  const meta = sealedMeta({ name: damage.sealedName ?? plainName, size: made.size, sha256: damage.innerSha ?? made.sha256, wrap: STAND_IN_WRAP });
+  const release = { version, url: `https://github.com/example/releases/download/v${version}/${assetName}`, sha256: made.sealedSha256, sealed: meta };
+  const manifest = { release, signature: sign(null, Buffer.from(signedText(release)), privateKey).toString('base64') };
+  if (damage.afterSigning) damage.afterSigning(manifest);
+  if (damage.flipByte !== undefined) {
+    body = Buffer.from(body);
+    body[damage.flipByte] ^= 1;
+  }
+  fs.rmSync(work, { recursive: true, force: true });
+  return { cek, assets: [{ id: damage.idBase ?? 40, name: assetName, body }, { id: (damage.idBase ?? 40) + 1, name: manifestName, body: Buffer.from(JSON.stringify(manifest)) }], product };
+}
+
+/** Both products sealed. Returns the feeds and the keys a service would release for them. */
+export async function buildSealedFeeds({ privateKey, target = 'linux-x64', uiFiles, uiDamage, engineDamage, enginePackage }) {
+  const uiZip = makeZip(
+    uiFiles ?? {
+      'echlon-pack.json': JSON.stringify({ name: 'ui', start: { win32: 'start.cmd', posix: 'start.sh' } }),
+      'start.cmd': '@echo off\r\n',
+      'start.sh': '#!/bin/sh\n',
+      'app/server.mjs': 'console.log("SECRET-UI-LOGIC");\n',
+    },
+  );
+  const ui = await sealedRelease({ product: 'ui', version: '1.0.0', plainName: 'echlon-ui-1.0.0.zip', plainBody: uiZip, assetName: 'echlon-ui-1.0.0.zip.sealed', manifestName: 'latest-ui.json', privateKey, damage: { idBase: 40, ...uiDamage } });
+  const engineBin = Buffer.from(`SECRET-ENGINE-BINARY-${'x'.repeat(10000)}`);
+  // An engine can be one file (the old shape) or a package: a zip of the program and what sits beside it, with a pack
+  // manifest naming the program to run. `enginePackage` is the manifest's fields (overridable), plus extra files.
+  const pkg = enginePackage
+    ? makeZip({
+        'echlon.exe': engineBin,
+        echlon: engineBin,
+        'rule-bank/a.json': '{"rule":1}',
+        'echlon-pack.json': JSON.stringify({ name: 'engine', version: '2.0.0', target, licensed: true, exe: { win32: 'echlon.exe', posix: 'echlon' }, requires: {}, ...enginePackage.pack }),
+        ...enginePackage.files,
+      })
+    : undefined;
+  const engine = pkg
+    ? await sealedRelease({ product: 'engine', version: '2.0.0', plainName: `echlon-engine-2.0.0-${target}.zip`, plainBody: pkg, assetName: `echlon-engine-2.0.0-${target}.zip.sealed`, manifestName: `latest-${target}.json`, privateKey, damage: { idBase: 50, ...engineDamage } })
+    : await sealedRelease({ product: 'engine', version: '2.0.0', plainName: `echlon-engine-${target}`, plainBody: engineBin, assetName: `echlon-engine-${target}.sealed`, manifestName: `latest-${target}.json`, privateKey, damage: { idBase: 50, ...engineDamage } });
+  return { repos: { 'example/ui': { version: '1.0.0', assets: ui.assets }, 'example/engine': { version: '2.0.0', assets: engine.assets } }, contentKeys: { ui: ui.cek, engine: engine.cek }, uiZip, engineBin };
 }

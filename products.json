@@ -1,6 +1,7 @@
 {
   "ui": {
     "name": "Echlon UI",
+    "requiresNode": 26,
     "repo": "Eagle84/echlon-ui-releases",
     "manifest": "latest-ui.json"
   },

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { PackError } from '../installer/lib/errors.mjs';
-import { applyKey } from '../installer/lib/prompt.mjs';
+import { PassThrough } from 'node:stream';
+import { applyKey, ask } from '../installer/lib/prompt.mjs';
 import { assetNameOf } from '../installer/lib/product.mjs';
 import { canonical, verifyManifest } from '../installer/lib/verify.mjs';
 import { checkInstallDir, engineLauncher, shq, uiLauncher, withEngineConnection } from '../installer/lib/wire.mjs';
@@ -24,6 +25,24 @@ describe('typing a key without showing it', () => {
     assert.equal(applyKey('ab', '\r').done, true);
     assert.equal(applyKey('ab', '\u0003').cancelled, true);
     assert.equal(applyKey('ab', '\u001b').buffer, 'ab');
+  });
+});
+
+describe('asking a question', () => {
+  const streams = () => ({ input: new PassThrough(), output: new PassThrough() });
+
+  it('returns the answer, trimmed', async () => {
+    const io = streams();
+    const p = ask('Where? ', io);
+    io.input.write('  here  \n');
+    assert.equal(await p, 'here');
+  });
+
+  it('fails loudly when the input ends before an answer, instead of the program just stopping', async () => {
+    const io = streams();
+    const p = ask('Where? ', io);
+    io.input.end();
+    await assert.rejects(p, /input closed\. Nothing was installed/);
   });
 });
 
@@ -121,14 +140,28 @@ describe('what is written for the customer', () => {
   it('writes a start script per platform that sets the token and starts the right thing', () => {
     const win = engineLauncher({ platform: 'win32', installDir: 'C:\\E', exeRelative: 'engine\\1\\echlon.exe', token: 'tok' });
     assert.equal(win.name, 'start-engine.cmd');
-    assert.match(win.text, /set "ECHLON_MCP_TOKEN=tok"/);
-    assert.match(win.text, /echlon\.exe" --http/);
+    const extra = (set, name) => set.extras.find((x) => x.name === name)?.text;
+    // Windows runs the engine with no window: the start script only hands over, and the token lives in the launcher it starts.
+    assert.match(win.text, /wscript\.exe \/\/nologo "%~dp0start-engine\.vbs"/);
+    assert.ok(!win.text.includes('tok'), 'the visible start script does not hold the token');
+    assert.match(extra(win, 'start-engine.vbs'), /\("ECHLON_MCP_TOKEN"\) = "tok"/);
+    assert.match(extra(win, 'start-engine.vbs'), /\.Run .*, 0, False/, 'window style 0 is hidden');
+    assert.match(extra(win, 'start-engine.vbs'), /echlon\.exe" & q & " --http >> " & q & "C:\\E\\engine\.log"/);
+    assert.match(extra(win, 'stop-engine.cmd'), /\$_\.Name -eq 'echlon\.exe' -and \$_\.CommandLine -match '--http'/, 'only the engine started with --http is stopped, never one an AI tool started');
+    assert.match(extra(win, 'echlon-op.cmd'), /echlon\.exe" op %\*/);
     const nix = engineLauncher({ platform: 'linux', installDir: "/o'b", exeRelative: 'engine/1/echlon', token: 'tok' });
     assert.equal(nix.name, 'start-engine.sh');
     assert.match(nix.text, /^#!\/bin\/sh/);
     assert.match(nix.text, /ECHLON_MCP_TOKEN='tok'/);
-    assert.ok(nix.text.includes(`exec ${shq(path.join("/o'b", 'engine/1/echlon'))} --http`));
+    assert.ok(nix.text.includes(`exec ${shq(path.posix.join("/o'b", 'engine/1/echlon'))} --http`));
     assert.ok(nix.text.includes(`'\\''`), 'the single quote in the folder name is closed, escaped and reopened');
+    assert.ok(extra(nix, 'echlon-op').includes(`exec ${shq(path.posix.join("/o'b", 'engine/1/echlon'))} op "$@"`));
+  });
+
+  it('keeps the engine token out of every file but the one that starts the engine', () => {
+    const win = engineLauncher({ platform: 'win32', installDir: 'C:\\E', exeRelative: 'engine\\1\\echlon.exe', token: 'SECRETTOKEN' });
+    const holders = [win, ...win.extras].filter((f) => f.text.includes('SECRETTOKEN')).map((f) => f.name);
+    assert.deepEqual(holders, ['start-engine.vbs']);
   });
 
   it('starts the UI with its data kept outside the versioned folder, so an update keeps it', () => {
@@ -160,10 +193,66 @@ describe('the entry scripts', () => {
     assert.match(bat, /-ExecutionPolicy Bypass -File "%~dp0install\.ps1" %\*/);
   });
 
+  it('install.bat keeps the window open when started by double-click, and keeps the exit code', () => {
+    const bat = fs.readFileSync(path.join(ROOT, 'install.bat'), 'utf8');
+    assert.match(bat, /find \/i "\/c"/);
+    assert.match(bat, /\bpause\b/);
+    assert.match(bat, /exit \/b %echlon_code%/);
+  });
+
   it('the shipped feed config names both products and no secret', () => {
     const products = JSON.parse(fs.readFileSync(path.join(ROOT, 'products.json'), 'utf8'));
     assert.deepEqual(Object.keys(products).sort(), ['engine', 'ui']);
     for (const p of Object.values(products)) assert.match(p.repo, /^[\w.-]+\/[\w.-]+$/);
     assert.ok(!/ghp_|github_pat_|BEGIN .*PRIVATE KEY/.test(JSON.stringify(products)));
+  });
+});
+
+describe('the shipped release key and service address', () => {
+  it('is a real Ed25519 public key, not the placeholder, so a release signed by the matching private key can be verified', async () => {
+    const { createPublicKey } = await import('node:crypto');
+    const text = fs.readFileSync(path.join(ROOT, 'release-pubkey.txt'), 'utf8').trim();
+    assert.ok(!/REPLACE/.test(text), 'still the placeholder');
+    const key = createPublicKey({ key: Buffer.from(text, 'base64'), format: 'der', type: 'spki' });
+    assert.equal(key.asymmetricKeyType, 'ed25519');
+  });
+
+  it('names the licence service over https, as a bare origin with no path', () => {
+    const url = new URL(fs.readFileSync(path.join(ROOT, 'service.txt'), 'utf8').trim());
+    assert.equal(url.protocol, 'https:');
+    assert.equal(url.origin + '/', url.href);
+    assert.equal(url.hostname, 'licence.echlonlabs.com');
+  });
+});
+
+describe('what the installer needs of Node', () => {
+  // The launchers accept Node 20 and newer, and an engine-only install needs nothing newer, so the installer must LOAD
+  // on Node 20. A named import of something only recent Node has makes the whole installer fail at start, even for a
+  // plain release. Tests run on one Node, so this reads the imports instead of trusting that run.
+  const NODE_20_CRYPTO = new Set(['createCipheriv', 'createDecipheriv', 'createHash', 'createPublicKey', 'createPrivateKey', 'generateKeyPairSync', 'hkdfSync', 'randomBytes', 'sign', 'verify', 'randomUUID']);
+
+  it('imports from node:crypto only what Node 20 has, in every file the installer loads', () => {
+    const files = [path.join(ROOT, 'installer', 'install.mjs'), ...fs.readdirSync(path.join(ROOT, 'installer', 'lib')).map((f) => path.join(ROOT, 'installer', 'lib', f))];
+    for (const file of files) {
+      const text = fs.readFileSync(file, 'utf8');
+      for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'node:crypto'/g)) {
+        for (const name of m[1].split(',').map((n) => n.trim()).filter(Boolean)) {
+          assert.ok(NODE_20_CRYPTO.has(name), `${path.basename(file)} imports ${name} from node:crypto by name; it may not exist on Node 20, and then the installer cannot start`);
+        }
+      }
+    }
+  });
+
+  it('keeps the key-wrapping functions out of the names it imports, and says why', () => {
+    const text = fs.readFileSync(path.join(ROOT, 'installer', 'lib', 'sealed.mjs'), 'utf8');
+    assert.ok(!/^\s+(encapsulate|decapsulate),/m.test(text));
+    assert.match(text, /kem\.encapsulate\(/);
+    assert.match(text, /never imported by name/);
+  });
+
+  it('declares the Node it needs as 20, the same as the launchers', () => {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).engines.node, '>=20');
+    assert.match(fs.readFileSync(path.join(ROOT, 'install.ps1'), 'utf8'), /\$need = 20/);
+    assert.match(fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8'), /need=20/);
   });
 });
