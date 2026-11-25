@@ -193,3 +193,20 @@ describe('the entry scripts', () => {
     assert.ok(!/ghp_|github_pat_|BEGIN .*PRIVATE KEY/.test(JSON.stringify(products)));
   });
 });
+
+describe('the shipped release key and service address', () => {
+  it('is a real Ed25519 public key, not the placeholder, so a release signed by the matching private key can be verified', async () => {
+    const { createPublicKey } = await import('node:crypto');
+    const text = fs.readFileSync(path.join(ROOT, 'release-pubkey.txt'), 'utf8').trim();
+    assert.ok(!/REPLACE/.test(text), 'still the placeholder');
+    const key = createPublicKey({ key: Buffer.from(text, 'base64'), format: 'der', type: 'spki' });
+    assert.equal(key.asymmetricKeyType, 'ed25519');
+  });
+
+  it('names the licence service over https, as a bare origin with no path', () => {
+    const url = new URL(fs.readFileSync(path.join(ROOT, 'service.txt'), 'utf8').trim());
+    assert.equal(url.protocol, 'https:');
+    assert.equal(url.origin + '/', url.href);
+    assert.equal(url.hostname, 'licence.echlonlabs.com');
+  });
+});

@@ -179,7 +179,7 @@ describe('what the service refuses', () => {
 });
 
 describe('where the licence key may go', () => {
-  const SHIPPED = 'https://echlonai.echlonlabs.com';
+  const SHIPPED = 'https://licence.echlonlabs.com';
 
   it('accepts the shipped service address, and plain http only to this machine', () => {
     assert.equal(checkServiceUrl(SHIPPED, SHIPPED), SHIPPED);
@@ -188,7 +188,7 @@ describe('where the licence key may go', () => {
   });
 
   it('refuses any other address, plain http to the shipped host, and a look-alike host', () => {
-    for (const url of ['https://evil.example', 'http://echlonai.echlonlabs.com', 'https://echlonai.echlonlabs.com.evil.example', 'http://example.com', 'not a url']) {
+    for (const url of ['https://evil.example', 'http://licence.echlonlabs.com', 'https://licence.echlonlabs.com.evil.example', 'http://example.com', 'not a url']) {
       assert.throws(() => checkServiceUrl(url, SHIPPED), PackError, url);
     }
   });
