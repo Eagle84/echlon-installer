@@ -129,8 +129,14 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   const platform = process.platform;
   if (installed.engine) {
     const e = installed.engine;
-    const launcher = writeLauncher(dir, engineLauncher({ platform, installDir: dir, exeRelative: path.join('engine', e.version, e.file), token: engineToken }));
+    const launcher = writeLauncher(dir, engineLauncher({ platform, installDir: dir, exeRelative: path.join('engine', e.version, e.exe ?? e.file), token: engineToken }));
     out(`Start the engine with: ${launcher}`);
+    // A licensed engine renews its licence with the customer's key and stops serving when it ends; it looks for the key
+    // beside its program. Same rule as the UI: only a licensed package, only a licence key, owner-only, never printed.
+    if (e.pack?.licensed && isLicenceKey(keys.engine)) {
+      writeLicenceKey(e.dest, keys.engine);
+      out('Your licence key is kept for the engine so it can renew its licence (readable only by you).');
+    }
   }
   if (installed.ui) {
     const u = installed.ui;
@@ -153,7 +159,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   }
   if (installed.engine && connect !== 'none') {
     const e = installed.engine;
-    await offerConnections({ exe: path.join(dir, 'engine', e.version, e.file), choice: connect, yes: args.yes, ctx: hostCtx ?? defaultContext(), out, askFn, entryOf });
+    await offerConnections({ exe: path.join(dir, 'engine', e.version, e.exe ?? e.file), choice: connect, yes: args.yes, ctx: hostCtx ?? defaultContext(), out, askFn, entryOf });
   }
   for (const f of failures) out(`Not installed - ${f}`);
   if (failures.length === wanted.length) out('Nothing was installed.');

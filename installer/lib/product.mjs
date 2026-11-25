@@ -81,6 +81,7 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
     fs.mkdirSync(staging, { recursive: true });
 
     let pack = null;
+    let exe;
     if (installName.toLowerCase().endsWith('.zip')) {
       log(`Unpacking ${def.name}`);
       extractZip(installFile, staging);
@@ -89,6 +90,17 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
       if (pack) {
         checkNode(pack.requires, nodeMajor, def.name);
         const steps = checkPostInstall(pack.postInstall);
+        // The program the package says to run, for this system. It becomes a launcher and an AI-tool entry, so it is
+        // checked: a plain path inside the package, present, and (on Linux) made runnable, since a zip does not carry that.
+        const declared = pack.exe?.[process.platform === 'win32' ? 'win32' : 'posix'];
+        if (pack.exe && declared === undefined) throw new PackError(`This build of ${def.name} is not for this computer.`);
+        if (declared !== undefined) {
+          const safe = typeof declared === 'string' && declared.length > 0 && !path.isAbsolute(declared) && !declared.split(/[\\/]/).includes('..');
+          if (!safe) throw new PackError(`${def.name} names a program that is not a plain path inside the package, so it was not installed.`);
+          if (!fs.existsSync(path.join(staging, declared))) throw new PackError(`${def.name} names a program that is not in the package (${declared}), so it was not installed.`);
+          if (process.platform !== 'win32') fs.chmodSync(path.join(staging, declared), 0o755);
+          exe = declared;
+        }
         for (const step of steps) await progress.working(`Setting up ${def.name} (installing its dependencies; this can take a few minutes)`, Promise.resolve(runCommand(step, staging)));
       }
     } else {
@@ -100,7 +112,7 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
     fs.renameSync(staging, dest);
     fs.writeFileSync(path.join(productDir, 'current.json'), `${JSON.stringify({ version: signed.version, file: installName }, null, 2)}\n`);
     log(`Installed ${def.name} ${signed.version}`);
-    return { version: signed.version, dest, file: installName, kind: pack ? 'package' : 'file', pack };
+    return { version: signed.version, dest, file: installName, exe, kind: pack ? 'package' : 'file', pack };
   } finally {
     fs.rmSync(`${path.join(dir, id, signed.version)}.partial`, { recursive: true, force: true });
     fs.rmSync(work, { recursive: true, force: true });

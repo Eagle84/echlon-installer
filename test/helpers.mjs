@@ -282,7 +282,7 @@ export async function sealedRelease({ product, version, plainName, plainBody, as
 }
 
 /** Both products sealed. Returns the feeds and the keys a service would release for them. */
-export async function buildSealedFeeds({ privateKey, target = 'linux-x64', uiFiles, uiDamage, engineDamage }) {
+export async function buildSealedFeeds({ privateKey, target = 'linux-x64', uiFiles, uiDamage, engineDamage, enginePackage }) {
   const uiZip = makeZip(
     uiFiles ?? {
       'echlon-pack.json': JSON.stringify({ name: 'ui', start: { win32: 'start.cmd', posix: 'start.sh' } }),
@@ -293,6 +293,19 @@ export async function buildSealedFeeds({ privateKey, target = 'linux-x64', uiFil
   );
   const ui = await sealedRelease({ product: 'ui', version: '1.0.0', plainName: 'echlon-ui-1.0.0.zip', plainBody: uiZip, assetName: 'echlon-ui-1.0.0.zip.sealed', manifestName: 'latest-ui.json', privateKey, damage: { idBase: 40, ...uiDamage } });
   const engineBin = Buffer.from(`SECRET-ENGINE-BINARY-${'x'.repeat(10000)}`);
-  const engine = await sealedRelease({ product: 'engine', version: '2.0.0', plainName: `echlon-engine-${target}`, plainBody: engineBin, assetName: `echlon-engine-${target}.sealed`, manifestName: `latest-${target}.json`, privateKey, damage: { idBase: 50, ...engineDamage } });
+  // An engine can be one file (the old shape) or a package: a zip of the program and what sits beside it, with a pack
+  // manifest naming the program to run. `enginePackage` is the manifest's fields (overridable), plus extra files.
+  const pkg = enginePackage
+    ? makeZip({
+        'echlon.exe': engineBin,
+        echlon: engineBin,
+        'rule-bank/a.json': '{"rule":1}',
+        'echlon-pack.json': JSON.stringify({ name: 'engine', version: '2.0.0', target, licensed: true, exe: { win32: 'echlon.exe', posix: 'echlon' }, requires: {}, ...enginePackage.pack }),
+        ...enginePackage.files,
+      })
+    : undefined;
+  const engine = pkg
+    ? await sealedRelease({ product: 'engine', version: '2.0.0', plainName: `echlon-engine-2.0.0-${target}.zip`, plainBody: pkg, assetName: `echlon-engine-2.0.0-${target}.zip.sealed`, manifestName: `latest-${target}.json`, privateKey, damage: { idBase: 50, ...engineDamage } })
+    : await sealedRelease({ product: 'engine', version: '2.0.0', plainName: `echlon-engine-${target}`, plainBody: engineBin, assetName: `echlon-engine-${target}.sealed`, manifestName: `latest-${target}.json`, privateKey, damage: { idBase: 50, ...engineDamage } });
   return { repos: { 'example/ui': { version: '1.0.0', assets: ui.assets }, 'example/engine': { version: '2.0.0', assets: engine.assets } }, contentKeys: { ui: ui.cek, engine: engine.cek }, uiZip, engineBin };
 }
