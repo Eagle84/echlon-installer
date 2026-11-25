@@ -25,7 +25,7 @@ const LICENCES = {
   ech_lic_newstate: { products: ['ui', 'engine'], state: 'a-state-this-installer-has-never-heard-of' },
 };
 
-async function install(extra = [], { key = BOTH, feeds = buildFeeds({ privateKey: keys.privateKey, target: TARGET }), secrets, serviceOpts = {}, answers = [], serviceUrl } = {}) {
+async function install(extra = [], { key = BOTH, feeds = buildFeeds({ privateKey: keys.privateKey, target: TARGET }), secrets, serviceOpts = {}, answers = [], serviceUrl, deps = {} } = {}) {
   const dir = tmpDir();
   if (service) await service.close();
   service = await startService({ licences: LICENCES, repos: feeds, ...serviceOpts });
@@ -45,6 +45,7 @@ async function install(extra = [], { key = BOTH, feeds = buildFeeds({ privateKey
       return left.shift() ?? '';
     },
     runCommand: () => {},
+    ...deps,
   }).catch((e) => {
     if (e instanceof PackError) {
       lines.push(e.message);
@@ -69,6 +70,23 @@ describe('installing with a licence key', () => {
     assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0', 'app', 'server.mjs')));
     assert.ok(fs.existsSync(path.join(r.dir, 'engine', '2.0.0', `echlon-engine-${TARGET}`)));
     assert.match(r.text, /Done\./);
+  });
+
+  it('tells the customer each step in order, with the download bar between downloading and checking', async () => {
+    const drawn = [];
+    const stream = { isTTY: true, columns: 80, write: (s) => drawn.push(s) };
+    const r = await install(['--product', 'ui'], { deps: { stream } });
+    assert.equal(r.code, 0, r.text);
+    const steps = ['Checking your key for Echlon UI', 'Downloading Echlon UI 1.0.0', 'Checking the download is exactly what Echlon signed', 'Unpacking Echlon UI', 'Installed Echlon UI 1.0.0'];
+    let at = -1;
+    for (const s of steps) {
+      const i = r.lines.findIndex((l, n) => n > at && l.includes(s));
+      assert.ok(i > at, `"${s}" is missing or out of order in:\n${r.text}`);
+      at = i;
+    }
+    const bar = drawn.join('');
+    assert.match(bar, /\r?Echlon UI 1\.0\.0 {2}\[#{20}\] 100%/);
+    assert.ok(bar.endsWith('\n'));
   });
 
   it('sends the key to the service and nothing to the storage host the file comes from', async () => {

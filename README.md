@@ -20,7 +20,7 @@ Echlon customer pack
 Then it asks **where to install** (a local folder; Enter accepts the default, `~/Echlon`), and only then for your
 **access key**. If you chose both products it asks whether one key covers both; answer `n` to enter a key for the
 UI and a different one for the engine. The key is the **Echlon licence key** (`ech_lic_...`) you were given. It
-is typed without being shown, is kept only in memory for this run, is sent only to the Echlon download service,
+is typed with an asterisk shown for each character, is kept only in memory for this run, is sent only to the Echlon download service,
 and is never written to disk or printed. Without a valid key nothing is installed.
 
 What a key allows decides what you get. A UI key installs the UI, an engine key the engine, a key for both
@@ -41,6 +41,11 @@ A key that has been withdrawn, a suspended customer, or a licence that has ended
 4. If you installed both, makes a private access token for the engine and sets the UI up to use it. You never
    see or type it.
 5. Writes `start-ui` and `start-engine` scripts.
+
+Everything it does is shown as it happens: each step is named, the download has a progress bar (percentage, size and
+speed, redrawn in place on a terminal and one line per tenth when the output is a file), and the slow setup step
+shows how long it has been running. It is plain ASCII, so it reads the same in cmd, PowerShell, Windows Terminal
+and a Linux shell.
 
 Needs Node 20 or newer. If it is missing, the script says how to install it (and offers `winget` on Windows).
 

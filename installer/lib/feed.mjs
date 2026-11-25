@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { saveBody } from './download.mjs';
 import { PackError } from './errors.mjs';
 
 export const GITHUB_API = 'https://api.github.com';
@@ -75,7 +73,7 @@ export class Feed {
       manifest,
       artifactFor: (name) => {
         const asset = release.assets.find((a) => a.name === name);
-        return asset ? { save: (file) => this.download(asset, file, def.name) } : null;
+        return asset ? { save: (file, onProgress) => this.download(asset, file, def.name, onProgress) } : null;
       },
     };
   }
@@ -89,9 +87,9 @@ export class Feed {
     }
   }
 
-  async download(asset, destFile, what) {
+  async download(asset, destFile, what, onProgress) {
     const res = await this.request(asset.url, 'application/octet-stream', what);
     if (!res.body) throw new PackError('The download was empty.');
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(destFile));
+    await saveBody(res, destFile, onProgress, asset.size);
   }
 }

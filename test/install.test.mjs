@@ -264,14 +264,14 @@ describe('access keys', () => {
   it('asks once when one key covers both products, and uses it for each', async () => {
     const r = await install(['--product', 'both'], { secrets: [GOOD], answers: ['y'] });
     assert.equal(r.code, 0, r.text);
-    assert.equal(r.lines.filter((l) => /not shown as you type/.test(l)).length, 1);
+    assert.equal(r.lines.filter((l) => /access key: /i.test(l)).length, 1);
     assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')) && fs.existsSync(path.join(r.dir, 'engine', '2.0.0')));
   });
 
   it('treats Enter as yes to one key for both', async () => {
     const r = await install(['--product', 'both'], { secrets: [GOOD], answers: [''] });
     assert.equal(r.code, 0, r.text);
-    assert.equal(r.lines.filter((l) => /not shown as you type/.test(l)).length, 1);
+    assert.equal(r.lines.filter((l) => /access key: /i.test(l)).length, 1);
   });
 
   it('asks for a key per product when they are separate, and each product is fetched with its own', async () => {

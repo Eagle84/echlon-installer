@@ -3,14 +3,16 @@ import { PackError } from './errors.mjs';
 
 /**
  * What a typed character does to a secret being entered: Enter ends it, Backspace removes one,
- * Ctrl-C cancels, anything printable is added. Pure, so it can be tested without a terminal.
+ * Ctrl-C cancels, anything printable is added. `echo` is what to draw for it: an asterisk for a character, so
+ * the customer can see the key is going in, and a backspace-over for a deletion. Pure, so it can be tested
+ * without a terminal.
  */
 export function applyKey(buffer, ch) {
-  if (ch === '\r' || ch === '\n') return { buffer, done: true };
-  if (ch === '\u0003') return { buffer, cancelled: true };
-  if (ch === '\u007f' || ch === '\b') return { buffer: buffer.slice(0, -1) };
-  if (ch >= ' ') return { buffer: buffer + ch };
-  return { buffer };
+  if (ch === '\r' || ch === '\n') return { buffer, done: true, echo: '' };
+  if (ch === '\u0003') return { buffer, cancelled: true, echo: '' };
+  if (ch === '\u007f' || ch === '\b') return { buffer: buffer.slice(0, -1), echo: buffer.length > 0 ? '\b \b' : '' };
+  if (ch >= ' ') return { buffer: buffer + ch, echo: '*' };
+  return { buffer, echo: '' };
 }
 
 export function ask(question, { input = process.stdin, output = process.stdout } = {}) {
@@ -24,7 +26,7 @@ export function ask(question, { input = process.stdin, output = process.stdout }
 }
 
 /**
- * A secret, typed without being shown. On a terminal each key is read raw and nothing is echoed. When
+ * A secret, typed with an asterisk shown for each character. On a terminal each key is read raw and only the asterisk is echoed. When
  * input is piped (a script, a test) the first line is read instead; there is nothing to hide there.
  */
 export function askHidden(question, { input = process.stdin, output = process.stdout } = {}) {
@@ -52,6 +54,7 @@ export function askHidden(question, { input = process.stdin, output = process.st
         const r = applyKey(buffer, ch);
         if (r.cancelled) return finish(() => reject(new Error('cancelled')));
         buffer = r.buffer;
+        if (r.echo) output.write(r.echo);
         if (r.done) return finish(() => resolve(buffer.trim()));
       }
     };

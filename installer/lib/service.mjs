@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { saveBody } from './download.mjs';
 import { PackError } from './errors.mjs';
 
 export const LICENCE_KEY_PREFIX = 'ech_lic_';
@@ -71,12 +69,12 @@ export class ServiceFeed {
     const { manifest, artifact } = body;
     return {
       manifest,
-      artifactFor: (name) => (name === artifact.name ? { save: (file) => this.save(artifact.url, file, def.name) } : null),
+      artifactFor: (name) => (name === artifact.name ? { save: (file, onProgress) => this.save(artifact.url, file, def.name, onProgress, artifact.size) } : null),
     };
   }
 
   /** The file, from the address the service gave. No credential is sent: the address is the credential. */
-  async save(url, file, what) {
+  async save(url, file, what, onProgress, listedSize) {
     const u = new URL(url);
     if (u.protocol !== 'https:' && !(u.protocol === 'http:' && loopbackHost(u.hostname))) throw new PackError('The download service gave an insecure address, so nothing was downloaded.');
     let res;
@@ -86,6 +84,6 @@ export class ServiceFeed {
       throw new PackError('Could not reach the download. Check the internet connection and try again.');
     }
     if (!res.ok || !res.body) throw new PackError(`The download of ${what} failed (HTTP ${res.status}). The link may have expired; try again.`);
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(file));
+    await saveBody(res, file, onProgress, listedSize);
   }
 }

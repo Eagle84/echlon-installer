@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { PackError } from './errors.mjs';
 
 /**
@@ -30,6 +30,11 @@ export function checkNode(requires, have = Number(process.versions.node.split('.
 export function runStep(step, cwd) {
   checkPostInstall([step]);
   const win = process.platform === 'win32';
-  const r = win ? spawnSync(`npm ${step.slice(1).join(' ')}`, { cwd, stdio: 'ignore', shell: true }) : spawnSync('npm', step.slice(1), { cwd, stdio: 'ignore' });
-  if (r.status !== 0) throw new PackError(`Setting up the program's own files failed (${step.join(' ')}). Check the internet connection and try again. Nothing was installed.`);
+  // Not spawnSync: the progress line has to keep counting while npm works, and a blocked process cannot.
+  const child = win ? spawn(`npm ${step.slice(1).join(' ')}`, { cwd, stdio: 'ignore', shell: true }) : spawn('npm', step.slice(1), { cwd, stdio: 'ignore' });
+  return new Promise((resolve, reject) => {
+    const failed = () => reject(new PackError(`Setting up the program's own files failed (${step.join(' ')}). Check the internet connection and try again. Nothing was installed.`));
+    child.on('error', failed);
+    child.on('close', (code) => (code === 0 ? resolve() : failed()));
+  });
 }

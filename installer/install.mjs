@@ -7,6 +7,7 @@ import { PackError } from './lib/errors.mjs';
 import { Feed, GITHUB_API } from './lib/feed.mjs';
 import { ServiceFeed, isLicenceKey } from './lib/service.mjs';
 import { installProduct } from './lib/product.mjs';
+import { createProgress } from './lib/progress.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
 import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeUiSettings } from './lib/wire.mjs';
 
@@ -44,7 +45,7 @@ export const targetOf = () => `${process.platform}-${process.arch}`;
 /** A typed folder as an absolute path; `~` means the home folder. */
 export const folderOf = (typed, home = os.homedir()) => path.resolve(/^~(?=$|[\\/])/.test(typed) ? path.join(home, typed.slice(1)) : typed);
 
-export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand } = {}) {
+export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream } = {}) {
   const major = Number(process.versions.node.split('.')[0]);
   if (major < MIN_NODE) throw new PackError(`Node ${MIN_NODE} or newer is needed (this is ${process.versions.node}).`);
 
@@ -89,13 +90,19 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   const missing = wanted.filter((id) => !keys[id]);
   if (missing.length === 2) {
     const same = ((await askFn('One access key for both? (Y/n): ')) || 'y').toLowerCase().startsWith('y');
-    if (same) keys.ui = keys.engine = await askSecret('Access key (not shown as you type): ');
+    if (same) keys.ui = keys.engine = await askSecret('Access key: ');
   }
   for (const id of wanted) {
-    if (!keys[id]) keys[id] = await askSecret(`${products[id].name} access key (not shown as you type): `);
+    if (!keys[id]) keys[id] = await askSecret(`${products[id].name} access key: `);
     if (!keys[id]) throw new PackError(`An access key is needed for ${products[id].name}. Without it nothing can be installed.`);
   }
 
+  // On a terminal the download bar redraws in place; with no terminal stream (a test, a pipe) it prints lines.
+  const progress = createProgress(
+    stream
+      ? { write: (s) => stream.write(s), isTTY: Boolean(stream.isTTY), columns: stream.columns ?? 80 }
+      : { write: (s) => out(s.replace(/\r?\n$/, '')), isTTY: false },
+  );
   const target = args.target ?? targetOf();
   const installed = {};
   const failures = [];
@@ -107,7 +114,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   );
   for (const id of wanted) {
     try {
-      installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor, runCommand });
+      installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor, runCommand, progress });
     } catch (e) {
       if (!(e instanceof PackError)) throw e;
       failures.push(`${products[id].name}: ${e.message}`);
@@ -142,7 +149,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  run(process.argv.slice(2))
+  run(process.argv.slice(2), { stream: process.stdout })
     .then((code) => process.exit(code))
     .catch((e) => {
       console.error(e instanceof PackError ? e.message : `Something went wrong: ${e.message}`);
