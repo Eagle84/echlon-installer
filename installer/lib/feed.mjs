@@ -64,6 +64,22 @@ export class Feed {
     return { tag: body.tag_name, assets: body.assets.map((a) => ({ id: a.id, name: a.name, size: a.size, url: a.url })) };
   }
 
+  /** The newest release of a product, as the installer reads one: its signed manifest and a way to fetch a named file. */
+  async release({ def, target }) {
+    const release = await this.latest(def.repo, def.name);
+    const manifestName = def.manifest.replace('{target}', target);
+    const manifestAsset = release.assets.find((a) => a.name === manifestName);
+    if (!manifestAsset) throw new PackError(`No build of ${def.name} for this computer (${target}) has been published yet.`);
+    const manifest = await this.json(manifestAsset, def.name);
+    return {
+      manifest,
+      artifactFor: (name) => {
+        const asset = release.assets.find((a) => a.name === name);
+        return asset ? { save: (file) => this.download(asset, file, def.name) } : null;
+      },
+    };
+  }
+
   async json(asset, what) {
     const res = await this.request(asset.url, 'application/octet-stream', what);
     try {

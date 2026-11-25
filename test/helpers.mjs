@@ -180,3 +180,52 @@ export function walk(dir) {
   }
   return out;
 }
+
+/**
+ * A stand-in for the Echlon download service. It follows the contract of `POST /v1/download` in the engine
+ * repo: 403 `{state}` for a key that may not have the product, otherwise the signed manifest and a short-lived
+ * address for the file on a separate storage host, which must be fetched with no credential.
+ */
+export async function startService({ licences, repos, unavailable = false, tamperArtifactName = false }) {
+  const log = { service: [], storage: [] };
+  const assets = Object.values(repos).flatMap((r) => r.assets);
+  const storage = http.createServer((req, res) => {
+    log.storage.push({ url: req.url, authorization: req.headers.authorization });
+    const asset = assets.find((a) => `/dl/${a.id}` === req.url.split('?')[0]);
+    if (!asset) return res.writeHead(404).end();
+    res.writeHead(200).end(asset.body);
+  });
+  await new Promise((r) => storage.listen(0, '127.0.0.1', r));
+  const storageBase = `http://127.0.0.1:${storage.address().port}`;
+  const feeds = { ui: { repo: 'example/ui', manifest: () => 'latest-ui.json' }, engine: { repo: 'example/engine', manifest: (t) => `latest-${t}.json` } };
+
+  const service = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      log.service.push({ url: req.url, method: req.method, body });
+      const send = (code, obj) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(obj));
+      if (req.url !== '/v1/download' || req.method !== 'POST') return send(404, {});
+      if (unavailable) return send(503, { error: 'x' });
+      const licence = licences[body.key];
+      if (!licence) return send(403, { state: 'unknown' });
+      if (licence.state) return send(403, { state: licence.state });
+      if (!licence.products.includes(body.product)) return send(403, { state: 'product' });
+      const feed = feeds[body.product];
+      const repo = repos[feed.repo];
+      const manifest = repo.assets.find((a) => a.name === feed.manifest(body.target ?? ''));
+      if (!manifest) return send(404, { error: 'no release' });
+      const parsed = JSON.parse(manifest.body.toString());
+      const name = decodeURIComponent(parsed.release.url.split('/').pop());
+      const artifact = repo.assets.find((a) => a.name === name);
+      send(200, { product: body.product, version: parsed.release.version, manifest: parsed, artifact: { name: tamperArtifactName ? 'other.zip' : artifact.name, size: artifact.body.length, url: `${storageBase}/dl/${artifact.id}?sig=short-lived` } });
+    });
+  });
+  await new Promise((r) => service.listen(0, '127.0.0.1', r));
+  return {
+    base: `http://127.0.0.1:${service.address().port}`,
+    log,
+    close: () => Promise.all([new Promise((r) => service.close(r)), new Promise((r) => storage.close(r))]),
+  };
+}

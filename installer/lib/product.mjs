@@ -24,20 +24,17 @@ export function assetNameOf(url) {
  * installed version exactly as it was.
  */
 export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {}, nodeMajor, runCommand = runStep }) {
-  const release = await feed.latest(def.repo, def.name);
-  const manifestName = def.manifest.replace('{target}', target);
-  const manifestAsset = release.assets.find((a) => a.name === manifestName);
-  if (!manifestAsset) throw new PackError(`No build of ${def.name} for this computer (${target}) has been published yet.`);
+  const { manifest, artifactFor } = await feed.release({ id, def, target });
 
-  const signed = verifyManifest(await feed.json(manifestAsset, def.name), pubkey);
+  const signed = verifyManifest(manifest, pubkey);
   const artifactName = assetNameOf(signed.url);
-  const artifact = release.assets.find((a) => a.name === artifactName);
+  const artifact = artifactFor(artifactName);
   if (!artifact) throw new PackError(`The release for ${def.name} names a file that is not in it (${artifactName}).`);
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'echlon-pack-'));
   try {
     const file = path.join(work, artifactName);
-    await feed.download(artifact, file, def.name);
+    await artifact.save(file);
     const actual = await sha256OfFile(file);
     if (actual !== signed.sha256.toLowerCase()) {
       throw new PackError(`The download of ${def.name} does not match what was signed, so it was not installed. Nothing was changed.`);

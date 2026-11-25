@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PackError } from './lib/errors.mjs';
 import { Feed, GITHUB_API } from './lib/feed.mjs';
+import { ServiceFeed, isLicenceKey } from './lib/service.mjs';
 import { installProduct } from './lib/product.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
 import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeUiSettings } from './lib/wire.mjs';
@@ -26,7 +27,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes') out.yes = true;
-    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
+    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey', '--service'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
     else throw new PackError(`Unknown option ${a}.`);
   }
   return out;
@@ -95,16 +96,15 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     if (!keys[id]) throw new PackError(`An access key is needed for ${products[id].name}. Without it nothing can be installed.`);
   }
 
-  if (wanted.some((id) => keys[id].startsWith('ech_lic_'))) {
-    throw new PackError(
-      'That is an Echlon licence key. It licenses the software once it is installed, but it cannot download it: the installer needs the download key sent with it (a read-only GitHub token starting ghp_ or github_pat_). Nothing was installed.',
-    );
-  }
-
   const target = args.target ?? targetOf();
   const installed = {};
   const failures = [];
-  const feeds = Object.fromEntries(wanted.map((id) => [id, new Feed({ token: keys[id], apiBase: args.api ?? GITHUB_API })]));
+  // A licence key (what a customer is given) goes to the Echlon download service. Anything else is read as a
+  // GitHub token for the private release repositories, which is how an operator installs without the service.
+  const shipped = fs.readFileSync(path.join(ROOT, 'service.txt'), 'utf8').trim();
+  const feeds = Object.fromEntries(
+    wanted.map((id) => [id, isLicenceKey(keys[id]) ? new ServiceFeed({ key: keys[id], url: args.service ?? shipped, shipped }) : new Feed({ token: keys[id], apiBase: args.api ?? GITHUB_API })]),
+  );
   for (const id of wanted) {
     try {
       installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor, runCommand });
