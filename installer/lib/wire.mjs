@@ -108,17 +108,20 @@ export function engineLauncher({ platform, installDir, exeRelative, token }) {
 }
 
 /** The script that starts the UI from its installed folder, with its data kept outside the versioned folder so an update keeps it. */
-export function uiLauncher({ platform, versionDir, startRelative, dataDir }) {
+export function uiLauncher({ platform, versionDir, startRelative, dataDir, binDir }) {
   const start = (platform === 'win32' ? path.win32 : path.posix).join(versionDir, startRelative);
   if (platform === 'win32') {
+    // `binDir` is the folder of the Node Echlon downloaded for it, when this computer's own was too old: it goes first.
+    const node = binDir ? `rem The Node Echlon downloaded for it comes first.\r\nset "PATH=${binDir};%PATH%"\r\n` : '';
     return {
       name: 'start-ui.cmd',
-      text: `@echo off\r\nrem Starts the Echlon UI.\r\nset "ECHLON_DATA_DIR=${dataDir}"\r\ncd /d "${versionDir}"\r\ncall "${start}"\r\n`,
+      text: `@echo off\r\nrem Starts the Echlon UI.\r\n${node}set "ECHLON_DATA_DIR=${dataDir}"\r\ncd /d "${versionDir}"\r\ncall "${start}"\r\n`,
     };
   }
+  const node = binDir ? `# The Node Echlon downloaded for it comes first.\nPATH=${shq(binDir)}:"$PATH"\nexport PATH\n` : '';
   return {
     name: 'start-ui.sh',
-    text: `#!/bin/sh\n# Starts the Echlon UI.\nECHLON_DATA_DIR=${shq(dataDir)}\nexport ECHLON_DATA_DIR\ncd ${shq(versionDir)} || exit 1\nexec ${shq(start)}\n`,
+    text: `#!/bin/sh\n# Starts the Echlon UI.\n${node}ECHLON_DATA_DIR=${shq(dataDir)}\nexport ECHLON_DATA_DIR\ncd ${shq(versionDir)} || exit 1\nexec ${shq(start)}\n`,
   };
 }
 

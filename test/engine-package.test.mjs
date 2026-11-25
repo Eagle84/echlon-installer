@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
-import { buildSealedFeeds, newKeys, noPath, sandboxHosts, startMock, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildSealedFeeds, newKeys, calm, noPath, sandboxHosts, startMock, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const LIC = 'ech_lic_enginepackage000000000000';
 const GOOD = 'ghp_goodkey_00000000000000000000';
@@ -31,6 +31,7 @@ async function install(extra = [], { sealed, token = LIC, entry, answer = '', ad
     runCommand: () => {},
     hostCtx: sandboxHosts(),
     pathAdder: adder ?? noPath,
+    prereq: calm,
     entryOf: entry ?? (async (exe) => (seen.push(exe), { command: exe, args: [], env: { A: '1' } })),
   }).catch((e) => {
     if (e instanceof PackError) {

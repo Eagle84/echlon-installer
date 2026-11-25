@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
 import { checkServiceUrl } from '../installer/lib/service.mjs';
-import { buildFeeds, newKeys, noPath, sandboxHosts, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildFeeds, newKeys, calm, noPath, sandboxHosts, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const BOTH = 'ech_lic_bothproducts0000000000000000';
 const UI_ONLY = 'ech_lic_uionly0000000000000000000';
@@ -47,6 +47,7 @@ async function install(extra = [], { key = BOTH, feeds = buildFeeds({ privateKey
     runCommand: () => {},
     hostCtx: sandboxHosts(),
     pathAdder: noPath,
+    prereq: calm,
     ...deps,
   }).catch((e) => {
     if (e instanceof PackError) {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { PackError } from './errors.mjs';
 
 /**
@@ -27,11 +28,13 @@ export function checkNode(requires, have = Number(process.versions.node.split('.
 }
 
 /** Runs one allowed step in a folder. The arguments are fixed by the allow-list above, never typed by anyone. */
-export function runStep(step, cwd) {
+export function runStep(step, cwd, { binDir } = {}) {
   checkPostInstall([step]);
   const win = process.platform === 'win32';
+  // The private Node's folder comes first, so npm runs on the Node the product will run on.
+  const env = binDir ? { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` } : process.env;
   // Not spawnSync: the progress line has to keep counting while npm works, and a blocked process cannot.
-  const child = win ? spawn(`npm ${step.slice(1).join(' ')}`, { cwd, stdio: 'ignore', shell: true }) : spawn('npm', step.slice(1), { cwd, stdio: 'ignore' });
+  const child = win ? spawn(`npm ${step.slice(1).join(' ')}`, { cwd, env, stdio: 'ignore', shell: true }) : spawn('npm', step.slice(1), { cwd, env, stdio: 'ignore' });
   return new Promise((resolve, reject) => {
     const failed = () => reject(new PackError(`Setting up the program's own files failed (${step.join(' ')}). Check the internet connection and try again. Nothing was installed.`));
     child.on('error', failed);

@@ -25,7 +25,7 @@ export function assetNameOf(url) {
  * artifact, check it is the one that was signed, and only then unpack it. Anything that fails leaves the
  * installed version exactly as it was.
  */
-export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {}, nodeMajor, runCommand = runStep, progress = quietProgress }) {
+export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {}, nodeMajor, nodeBin, runCommand = runStep, progress = quietProgress }) {
   log(`Checking your key for ${def.name}`);
   const { manifest, artifactFor, contentKey } = await feed.release({ id, def, target });
 
@@ -101,7 +101,7 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
           if (process.platform !== 'win32') fs.chmodSync(path.join(staging, declared), 0o755);
           exe = declared;
         }
-        for (const step of steps) await progress.working(`Setting up ${def.name} (installing its dependencies; this can take a few minutes)`, Promise.resolve(runCommand(step, staging)));
+        for (const step of steps) await progress.working(`Setting up ${def.name} (installing its dependencies; this can take a few minutes)`, Promise.resolve(runCommand(step, staging, { binDir: nodeBin })));
       }
     } else {
       fs.copyFileSync(installFile, path.join(staging, installName));

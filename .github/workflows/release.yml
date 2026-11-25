@@ -34,7 +34,7 @@ jobs:
       - name: Build the zip
         run: |
           chmod +x install.sh
-          zip -r echlon-installer.zip install.bat install.ps1 install.sh installer products.json service.txt release-pubkey.txt README.md
+          zip -r echlon-installer.zip install.bat install.ps1 install.sh installer products.json service.txt release-pubkey.txt runtime.txt README.md
           unzip -l echlon-installer.zip
 
       - name: Publish

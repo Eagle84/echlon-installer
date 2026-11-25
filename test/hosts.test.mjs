@@ -6,7 +6,7 @@ import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
 import { chooseHosts, offerConnections, parseConnect } from '../installer/lib/connect.mjs';
 import { HOSTS, codexBlock, connectHost, detectHosts, mergeCodexToml, mergeJsonEntry, readEntry, splitCodexToml } from '../installer/lib/hosts.mjs';
-import { buildFeeds, newKeys, noPath, sandboxHosts, startService, tmpDir, writeConfig } from './helpers.mjs';
+import { buildFeeds, newKeys, calm, noPath, sandboxHosts, startService, tmpDir, writeConfig } from './helpers.mjs';
 
 const ENTRY = {
   command: 'C:\\Echlon\\engine\\2.0.0\\echlon-engine-win32-x64.exe',
@@ -429,6 +429,7 @@ describe('the whole install, with the engine', () => {
         askFn: async (q) => (lines.push(q), asked.shift() ?? ''),
         hostCtx,
         pathAdder: noPath,
+    prereq: calm,
         entryOf,
       });
       return { code, text: lines.join('\n'), dir };

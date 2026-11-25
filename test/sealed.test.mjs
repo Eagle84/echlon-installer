@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
 import { verifyManifest } from '../installer/lib/verify.mjs';
-import { buildFeeds, buildSealedFeeds, newKeys, noPath, sandboxHosts, startMock, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildFeeds, buildSealedFeeds, newKeys, calm, noPath, sandboxHosts, startMock, startService, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const LIC = 'ech_lic_sealedkey0000000000000000';
 const GOOD = 'ghp_goodkey_00000000000000000000';
@@ -30,6 +30,7 @@ async function install(extra = [], { sealed, token = LIC, serviceOpts = {}, answ
     runCommand: () => {},
     hostCtx: sandboxHosts(),
     pathAdder: noPath,
+    prereq: calm,
   }).catch((e) => {
     if (e instanceof PackError) {
       lines.push(e.message);

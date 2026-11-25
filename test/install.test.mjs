@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { run } from '../installer/install.mjs';
 import { PackError } from '../installer/lib/errors.mjs';
-import { buildFeeds, newKeys, noPath, sandboxHosts, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
+import { buildFeeds, newKeys, calm, noPath, sandboxHosts, startMock, tmpDir, walk, writeConfig } from './helpers.mjs';
 
 const GOOD = 'ghp_goodkey_00000000000000000000';
 const UI_ONLY = 'ghp_uionly_00000000000000000000';
@@ -25,6 +25,7 @@ async function install(extra = [], { token = GOOD, feeds = buildFeeds({ privateK
   const code = await run([...dirArgs, '--api', mock.base, '--target', TARGET, '--products', cfg.products, '--pubkey', pubkey, ...(secretsLeft ? [] : ['--token-env', 'PACK_KEY']), ...extra], {
     hostCtx: sandboxHosts(),
     pathAdder: noPath,
+    prereq: calm,
     ...deps,
     env: env ?? { PACK_KEY: token },
     out: (l) => lines.push(l),
@@ -103,6 +104,7 @@ describe('installing both products', () => {
       askFn: async () => '',
       hostCtx: sandboxHosts(),
       pathAdder: noPath,
+    prereq: calm,
     });
     assert.equal(code, 0);
     assert.ok(fs.existsSync(path.join(first.dir, 'engine', '2.0.0')));

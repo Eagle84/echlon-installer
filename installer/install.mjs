@@ -12,6 +12,8 @@ import { installProduct } from './lib/product.mjs';
 import { createProgress } from './lib/progress.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
 import { addToPath } from './lib/pathenv.mjs';
+import { checkDiskSpace, portFree, runClaudeInstaller, whichCommand } from './lib/preflight.mjs';
+import { ensureNode, parseRuntime } from './lib/runtime.mjs';
 import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeLicenceKey, writeUiSettings } from './lib/wire.mjs';
 
 /**
@@ -27,11 +29,12 @@ const ROOT = path.resolve(HERE, '..');
 const MIN_NODE = 20;
 
 export function parseArgs(argv) {
-  const out = { yes: false };
+  const out = { yes: false, installClaude: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes') out.yes = true;
-    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey', '--service', '--connect'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
+    else if (a === '--install-claude') out.installClaude = true;
+    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey', '--service', '--connect', '--runtime'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
     else throw new PackError(`Unknown option ${a}.`);
   }
   return out;
@@ -42,6 +45,18 @@ const MENU = [
   ['2', 'engine', 'Echlon Engine'],
   ['3', 'both', 'Both (the full ecosystem)'],
 ];
+
+/** What is worth saying once the products are in: a busy port, and Claude Code for echlon-op. Nothing here stops an install. */
+async function finalChecks({ installed, args, askFn, out, prereq }) {
+  const free = prereq.portFree ?? portFree;
+  if (installed.engine && !(await free(3737))) out('Something else is already using port 3737, so the engine cannot start until it is stopped.');
+  if (installed.ui && !(await free(4180))) out('Something else is already using port 4180, so the UI cannot start until it is stopped.');
+  if (!installed.engine || (prereq.which ?? whichCommand)('claude')) return;
+  out('Claude Code is not installed. echlon-op opens a Claude Code session, so it needs it (the engine works without it, for your AI tools and the UI).');
+  const yes = args.installClaude || (!args.yes && ((await askFn("Install Claude Code now with Anthropic's official installer? (y/N): ")) || 'n').toLowerCase().startsWith('y'));
+  if (!yes) return;
+  out((await (prereq.installClaude ?? runClaudeInstaller)()) ? 'Claude Code is installed. Open a new terminal before using it.' : 'Claude Code could not be installed. Install it from https://claude.com/claude-code and echlon-op will work.');
+}
 
 export const targetOf = () => `${process.platform}-${process.arch}`;
 
@@ -55,7 +70,7 @@ export const inPlatformsFolder = (typed, home = os.homedir()) => {
   return path.basename(dir).toLowerCase() === PLATFORMS_DIR.toLowerCase() ? dir : path.join(dir, PLATFORMS_DIR);
 };
 
-export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream, hostCtx, entryOf, pathAdder = addToPath } = {}) {
+export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand, stream, hostCtx, entryOf, pathAdder = addToPath, prereq = {} } = {}) {
   const major = Number(process.versions.node.split('.')[0]);
   if (major < MIN_NODE) throw new PackError(`Node ${MIN_NODE} or newer is needed (this is ${process.versions.node}).`);
 
@@ -91,6 +106,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   checkInstallDir(dir);
   fs.mkdirSync(dir, { recursive: true });
   out(`Installing into ${dir}`);
+  checkDiskSpace(dir, { statfs: prereq.statfs });
 
   // One key may cover both products, or each product may have its own. A key named on the command line
   // (by environment variable) wins; otherwise it is typed, hidden.
@@ -124,9 +140,19 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   const feeds = Object.fromEntries(
     wanted.map((id) => [id, isLicenceKey(keys[id]) ? new ServiceFeed({ key: keys[id], url: args.service ?? shipped, shipped }) : new Feed({ token: keys[id], apiBase: args.api ?? GITHUB_API })]),
   );
+  // A product that needs a newer Node than this computer has is given a copy of its own, once, in the person's profile.
+  const pin = parseRuntime(fs.readFileSync(args.runtime ?? path.join(ROOT, 'runtime.txt'), 'utf8'));
+  const yesNo = async (q) => args.yes || ((await askFn(q)) || 'y').toLowerCase().startsWith('y');
+  const uiNode = {};
   for (const id of wanted) {
     try {
-      installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor, runCommand, progress });
+      let have = nodeMajor;
+      if (products[id].requiresNode) {
+        const n = await (prereq.ensureNode ?? ensureNode)({ minMajor: Number(products[id].requiresNode), haveMajor: nodeMajor, pin, progress, log: out, name: products[id].name, confirm: () => yesNo('Download it now? (Y/n): '), ...prereq.runtime });
+        have = n.major;
+        uiNode[id] = n.binDir;
+      }
+      installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor: have, nodeBin: uiNode[id], runCommand, progress });
     } catch (e) {
       if (!(e instanceof PackError)) throw e;
       failures.push(`${products[id].name}: ${e.message}`);
@@ -169,7 +195,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     }
     const start = u.pack?.start?.[platform === 'win32' ? 'win32' : 'posix'];
     if (start) {
-      const launcher = writeLauncher(dir, uiLauncher({ platform, versionDir: u.dest, startRelative: start, dataDir }));
+      const launcher = writeLauncher(dir, uiLauncher({ platform, versionDir: u.dest, startRelative: start, dataDir, binDir: uiNode.ui }));
       out(`Start the UI with: ${launcher}`);
     } else {
       out(`The UI is in ${u.dest}.`);
@@ -180,6 +206,7 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     const e = installed.engine;
     await offerConnections({ exe: path.join(dir, 'engine', e.version, e.exe ?? e.file), choice: connect, yes: args.yes, ctx: hostCtx ?? defaultContext(), out, askFn, entryOf });
   }
+  await finalChecks({ installed, args, askFn, out, prereq });
   for (const f of failures) out(`Not installed - ${f}`);
   if (failures.length === wanted.length) out('Nothing was installed.');
   else if (!failures.length) out('Done.');

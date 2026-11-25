@@ -243,6 +243,9 @@ export async function startService({ licences, repos, unavailable = false, tampe
  * A stand-in for this computer's AI tools: an empty home folder, no tool on PATH, and no command that can run.
  * Anything that reached for the real home folder would be writing to the person running the tests.
  */
+/** Stands in for looking at this computer (a port, Claude Code, free space): nothing is busy, nothing is missing. */
+export const calm = { which: () => '/usr/bin/claude', portFree: async () => true, statfs: () => ({ bavail: 1e9, bsize: 4096 }) };
+
 /** Stands in for putting the install folder on the PATH, which a test must never do to the machine it runs on. */
 export const noPath = () => 'PATH left alone (test)';
 
