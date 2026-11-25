@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+// A Windows checkout turns line endings into CRLF, so the file is read as the workflow means it.
+const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8').replace(/\r\n/g, '\n');
 
 describe('the release workflow', () => {
   it('runs only for a version tag, and holds no write permission except in the publishing job', () => {

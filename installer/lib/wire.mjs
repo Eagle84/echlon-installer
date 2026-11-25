@@ -72,7 +72,7 @@ export function writeUiSettings(dataDir, token) {
 
 /** The script that starts the engine with its token, for the platform it was installed on. */
 export function engineLauncher({ platform, installDir, exeRelative, token }) {
-  const exe = path.join(installDir, exeRelative);
+  const exe = (platform === 'win32' ? path.win32 : path.posix).join(installDir, exeRelative);
   if (platform === 'win32') {
     return {
       name: 'start-engine.cmd',
@@ -87,7 +87,7 @@ export function engineLauncher({ platform, installDir, exeRelative, token }) {
 
 /** The script that starts the UI from its installed folder, with its data kept outside the versioned folder so an update keeps it. */
 export function uiLauncher({ platform, versionDir, startRelative, dataDir }) {
-  const start = path.join(versionDir, startRelative);
+  const start = (platform === 'win32' ? path.win32 : path.posix).join(versionDir, startRelative);
   if (platform === 'win32') {
     return {
       name: 'start-ui.cmd',
