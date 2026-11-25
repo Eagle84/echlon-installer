@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PackError } from './errors.mjs';
 import { sha256OfFile, verifyManifest } from './verify.mjs';
+import { checkNode, checkPostInstall, runStep } from './setup.mjs';
 import { extractZip } from './zip.mjs';
 
 /** The file name a release points at: the last part of its url. */
@@ -22,7 +23,7 @@ export function assetNameOf(url) {
  * artifact, check it is the one that was signed, and only then unpack it. Anything that fails leaves the
  * installed version exactly as it was.
  */
-export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {} }) {
+export async function installProduct({ id, def, feed, dir, target, pubkey, log = () => {}, nodeMajor, runCommand = runStep }) {
   const release = await feed.latest(def.repo, def.name);
   const manifestName = def.manifest.replace('{target}', target);
   const manifestAsset = release.assets.find((a) => a.name === manifestName);
@@ -53,6 +54,12 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
       extractZip(file, staging);
       const manifestFile = path.join(staging, 'echlon-pack.json');
       if (fs.existsSync(manifestFile)) pack = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+      if (pack) {
+        checkNode(pack.requires, nodeMajor, def.name);
+        const steps = checkPostInstall(pack.postInstall);
+        if (steps.length) log(`Setting up ${def.name} (this downloads its dependencies and can take a few minutes)`);
+        for (const step of steps) runCommand(step, staging);
+      }
     } else {
       fs.copyFileSync(file, path.join(staging, artifactName));
       if (process.platform !== 'win32') fs.chmodSync(path.join(staging, artifactName), 0o755);
@@ -64,6 +71,7 @@ export async function installProduct({ id, def, feed, dir, target, pubkey, log =
     log(`Installed ${def.name} ${signed.version}`);
     return { version: signed.version, dest, file: artifactName, kind: pack ? 'package' : 'file', pack };
   } finally {
+    fs.rmSync(`${path.join(dir, id, signed.version)}.partial`, { recursive: true, force: true });
     fs.rmSync(work, { recursive: true, force: true });
   }
 }

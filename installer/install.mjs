@@ -7,7 +7,7 @@ import { PackError } from './lib/errors.mjs';
 import { Feed, GITHUB_API } from './lib/feed.mjs';
 import { installProduct } from './lib/product.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
-import { engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeUiSettings } from './lib/wire.mjs';
+import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeUiSettings } from './lib/wire.mjs';
 
 /**
  * The customer pack installer. It asks what to install, asks for the access key, and installs the
@@ -26,7 +26,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--yes') out.yes = true;
-    else if (['--product', '--dir', '--api', '--target', '--token-env', '--products', '--pubkey'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
+    else if (['--product', '--dir', '--api', '--target', '--token-env', '--ui-key-env', '--engine-key-env', '--products', '--pubkey'].includes(a)) out[a.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = argv[++i];
     else throw new PackError(`Unknown option ${a}.`);
   }
   return out;
@@ -40,14 +40,16 @@ const MENU = [
 
 export const targetOf = () => `${process.platform}-${process.arch}`;
 
-export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden } = {}) {
+/** A typed folder as an absolute path; `~` means the home folder. */
+export const folderOf = (typed, home = os.homedir()) => path.resolve(/^~(?=$|[\\/])/.test(typed) ? path.join(home, typed.slice(1)) : typed);
+
+export async function run(argv, { env = process.env, out = (s) => process.stdout.write(`${s}\n`), askFn = ask, askSecret = askHidden, nodeMajor, runCommand } = {}) {
   const major = Number(process.versions.node.split('.')[0]);
   if (major < MIN_NODE) throw new PackError(`Node ${MIN_NODE} or newer is needed (this is ${process.versions.node}).`);
 
   const args = parseArgs(argv);
   const products = JSON.parse(fs.readFileSync(args.products ?? path.join(ROOT, 'products.json'), 'utf8'));
   const pubkey = fs.readFileSync(args.pubkey ?? path.join(ROOT, 'release-pubkey.txt'), 'utf8');
-  const dir = path.resolve(args.dir ?? path.join(os.homedir(), 'Echlon'));
 
   out('');
   out('Echlon customer pack');
@@ -64,16 +66,42 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
   if (!['ui', 'engine', 'both'].includes(choice)) throw new PackError('The product must be ui, engine or both.');
   const wanted = choice === 'both' ? ['ui', 'engine'] : [choice];
 
-  const token = (args.tokenEnv ? env[args.tokenEnv] : undefined) || (await askSecret('Access key (not shown as you type): '));
-  if (!token) throw new PackError('An access key is needed. Without it nothing can be installed.');
+  // Where to install comes before the key: nothing is asked of GitHub until the customer has said where it goes.
+  let dir = args.dir;
+  if (!dir) {
+    const fallback = path.join(os.homedir(), 'Echlon');
+    const typed = await askFn(`Install folder (Enter for ${fallback}): `);
+    dir = typed || fallback;
+  }
+  dir = folderOf(dir);
+  checkInstallDir(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  out(`Installing into ${dir}`);
 
-  const feed = new Feed({ token, apiBase: args.api ?? GITHUB_API });
+  // One key may cover both products, or each product may have its own. A key named on the command line
+  // (by environment variable) wins; otherwise it is typed, hidden.
+  const fromEnv = (name) => (name ? env[name] : undefined) || undefined;
+  const keys = {
+    ui: fromEnv(args.uiKeyEnv) ?? fromEnv(args.tokenEnv),
+    engine: fromEnv(args.engineKeyEnv) ?? fromEnv(args.tokenEnv),
+  };
+  const missing = wanted.filter((id) => !keys[id]);
+  if (missing.length === 2) {
+    const same = ((await askFn('One access key for both? (Y/n): ')) || 'y').toLowerCase().startsWith('y');
+    if (same) keys.ui = keys.engine = await askSecret('Access key (not shown as you type): ');
+  }
+  for (const id of wanted) {
+    if (!keys[id]) keys[id] = await askSecret(`${products[id].name} access key (not shown as you type): `);
+    if (!keys[id]) throw new PackError(`An access key is needed for ${products[id].name}. Without it nothing can be installed.`);
+  }
+
   const target = args.target ?? targetOf();
   const installed = {};
   const failures = [];
+  const feeds = Object.fromEntries(wanted.map((id) => [id, new Feed({ token: keys[id], apiBase: args.api ?? GITHUB_API })]));
   for (const id of wanted) {
     try {
-      installed[id] = await installProduct({ id, def: products[id], feed, dir, target, pubkey, log: out });
+      installed[id] = await installProduct({ id, def: products[id], feed: feeds[id], dir, target, pubkey, log: out, nodeMajor, runCommand });
     } catch (e) {
       if (!(e instanceof PackError)) throw e;
       failures.push(`${products[id].name}: ${e.message}`);
