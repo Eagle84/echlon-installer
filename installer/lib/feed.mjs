@@ -50,7 +50,7 @@ export class Feed {
     }
     if (res.status === 401) throw new PackError('The access key was not accepted. Check it and try again.');
     // GitHub answers 404, not 403, for a private repository the key cannot see.
-    if (res.status === 404) throw new PackError(`This key does not include ${what}.`);
+    if (res.status === 404) throw new PackError(`This key does not include ${what}, or no release of it has been published yet.`);
     if (res.status === 403 || res.status === 429) throw new PackError('GitHub refused the request (a limit was reached, or the key has no access). Wait a few minutes and try again.');
     if (!res.ok) throw new PackError(`GitHub answered with an error (HTTP ${res.status}).`);
     return res;

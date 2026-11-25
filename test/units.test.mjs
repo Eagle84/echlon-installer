@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { PackError } from '../installer/lib/errors.mjs';
-import { applyKey } from '../installer/lib/prompt.mjs';
+import { PassThrough } from 'node:stream';
+import { applyKey, ask } from '../installer/lib/prompt.mjs';
 import { assetNameOf } from '../installer/lib/product.mjs';
 import { canonical, verifyManifest } from '../installer/lib/verify.mjs';
 import { checkInstallDir, engineLauncher, shq, uiLauncher, withEngineConnection } from '../installer/lib/wire.mjs';
@@ -24,6 +25,24 @@ describe('typing a key without showing it', () => {
     assert.equal(applyKey('ab', '\r').done, true);
     assert.equal(applyKey('ab', '\u0003').cancelled, true);
     assert.equal(applyKey('ab', '\u001b').buffer, 'ab');
+  });
+});
+
+describe('asking a question', () => {
+  const streams = () => ({ input: new PassThrough(), output: new PassThrough() });
+
+  it('returns the answer, trimmed', async () => {
+    const io = streams();
+    const p = ask('Where? ', io);
+    io.input.write('  here  \n');
+    assert.equal(await p, 'here');
+  });
+
+  it('fails loudly when the input ends before an answer, instead of the program just stopping', async () => {
+    const io = streams();
+    const p = ask('Where? ', io);
+    io.input.end();
+    await assert.rejects(p, /input closed\. Nothing was installed/);
   });
 });
 
@@ -158,6 +177,13 @@ describe('the entry scripts', () => {
   it('install.bat hands over to install.ps1 for this run only', () => {
     const bat = fs.readFileSync(path.join(ROOT, 'install.bat'), 'utf8');
     assert.match(bat, /-ExecutionPolicy Bypass -File "%~dp0install\.ps1" %\*/);
+  });
+
+  it('install.bat keeps the window open when started by double-click, and keeps the exit code', () => {
+    const bat = fs.readFileSync(path.join(ROOT, 'install.bat'), 'utf8');
+    assert.match(bat, /find \/i "\/c"/);
+    assert.match(bat, /\bpause\b/);
+    assert.match(bat, /exit \/b %echlon_code%/);
   });
 
   it('the shipped feed config names both products and no secret', () => {

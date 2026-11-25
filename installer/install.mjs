@@ -130,6 +130,8 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     if (engineToken) out('The UI is set up to use the engine.');
   }
   for (const f of failures) out(`Not installed - ${f}`);
+  if (failures.length === wanted.length) out('Nothing was installed.');
+  else if (!failures.length) out('Done.');
   return failures.length ? 1 : 0;
 }
 

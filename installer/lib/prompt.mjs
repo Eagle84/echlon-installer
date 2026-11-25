@@ -1,4 +1,5 @@
 import readline from 'node:readline';
+import { PackError } from './errors.mjs';
 
 /**
  * What a typed character does to a secret being entered: Enter ends it, Backspace removes one,
@@ -14,7 +15,12 @@ export function applyKey(buffer, ch) {
 
 export function ask(question, { input = process.stdin, output = process.stdout } = {}) {
   const rl = readline.createInterface({ input, output });
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
+  return new Promise((resolve, reject) => {
+    let answered = false;
+    // Input that ends before an answer (a closed pipe, a window shut) must not end the program quietly.
+    rl.once('close', () => { if (!answered) reject(new PackError('The installer was waiting for an answer and the input closed. Nothing was installed.')); });
+    rl.question(question, (a) => { answered = true; rl.close(); resolve(a.trim()); });
+  });
 }
 
 /**
@@ -27,8 +33,7 @@ export function askHidden(question, { input = process.stdin, output = process.st
     return new Promise((resolve) => {
       const rl = readline.createInterface({ input });
       rl.once('line', (l) => { rl.close(); output.write('\n'); resolve(l.trim()); });
-      rl.once('close', () => resolve(''));
-    });
+      rl.once('close', () => resolve(''));    });
   }
   return new Promise((resolve, reject) => {
     let buffer = '';

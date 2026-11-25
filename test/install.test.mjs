@@ -129,7 +129,7 @@ describe('a key that does not include everything', () => {
     assert.equal(r.code, 1);
     assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
     assert.ok(!fs.existsSync(path.join(r.dir, 'engine')));
-    assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine\./);
+    assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine, or no release of it has been published yet\./);
     const settings = path.join(r.dir, 'ui', 'data', 'echlon.settings.json');
     assert.ok(!fs.existsSync(settings), 'no engine connection is written for an engine that is not there');
   });
@@ -294,6 +294,7 @@ describe('access keys', () => {
     assert.ok(fs.existsSync(path.join(r.dir, 'ui', '1.0.0')));
     assert.ok(!fs.existsSync(path.join(r.dir, 'engine')));
     assert.match(r.text, /Not installed - Echlon Engine: This key does not include Echlon Engine/);
+    assert.ok(!/Nothing was installed/.test(r.text), 'something was installed, so it does not say nothing was');
   });
 
   it('takes a key per product from the environment, without asking', async () => {
@@ -302,6 +303,17 @@ describe('access keys', () => {
       tokens: { [UI_ONLY]: ['example/ui'], [ENGINE_ONLY]: ['example/engine'] },
     });
     assert.equal(r.code, 0, r.text);
+  });
+
+  it('ends with a plain line saying nothing was installed when every product failed', async () => {
+    const r = await install(['--product', 'both'], { token: 'ghp_wrong_000000000000000000000' });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /Nothing was installed\./);
+  });
+
+  it('ends with Done when everything installed', async () => {
+    const r = await install(['--product', 'ui']);
+    assert.match(r.text, /Done\./);
   });
 
   it('refuses to go on without a key, before asking GitHub anything', async () => {
