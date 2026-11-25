@@ -106,7 +106,7 @@ describe('installing with a licence key', () => {
     assert.equal(engine.body.target, TARGET);
   });
 
-  it('never prints, stores or logs the licence key', async () => {
+  it('never prints, stores or logs the licence key when the package is not licensed', async () => {
     const r = await install(['--product', 'both']);
     assert.ok(!r.text.includes(BOTH));
     for (const file of walk(r.dir)) assert.ok(!fs.readFileSync(file).includes(BOTH), `${file} holds the key`);
@@ -204,5 +204,56 @@ describe('where the licence key may go', () => {
     const { ServiceFeed } = await import('../installer/lib/service.mjs');
     const feed = new ServiceFeed({ key: BOTH, url: 'http://127.0.0.1:1', fetchImpl: async () => new Response('x') });
     await assert.rejects(() => feed.save('http://evil.example/a.zip', path.join(tmpDir(), 'a.zip'), 'Echlon UI'), /insecure address/);
+  });
+});
+
+describe('keeping the licence key for a licensed UI', () => {
+  const licensedUi = (licensed) =>
+    buildFeeds({
+      privateKey: keys.privateKey,
+      target: TARGET,
+      uiFiles: {
+        'echlon-pack.json': JSON.stringify({ name: 'ui', licensed, start: { win32: 'start.cmd', posix: 'start.sh' } }),
+        'start.cmd': '@echo off\r\n',
+        'start.sh': '#!/bin/sh\n',
+        'app/server.mjs': 'x\n',
+      },
+    });
+  const keyFile = (r) => path.join(r.dir, 'ui', 'data', 'licence.key');
+
+  it('writes the key where the UI reads it, owner-only, and says so without printing it', async () => {
+    const r = await install(['--product', 'ui'], { feeds: licensedUi(true) });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(fs.readFileSync(keyFile(r), 'utf8'), `${BOTH}\n`);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(keyFile(r)).mode & 0o777, 0o600);
+    assert.match(r.text, /licence key is kept for the UI so it can renew its licence/);
+    assert.ok(!r.text.includes(BOTH));
+  });
+
+  it('writes it nowhere else: not into the engine, not into the launchers, not into the UI settings', async () => {
+    const r = await install(['--product', 'both'], { feeds: licensedUi(true) });
+    assert.equal(r.code, 0, r.text);
+    const holders = walk(r.dir).filter((f) => fs.readFileSync(f).includes(BOTH));
+    assert.deepEqual(holders, [keyFile(r)]);
+  });
+
+  it('does not write it for a package that is not licensed', async () => {
+    for (const licensed of [false, undefined]) {
+      const r = await install(['--product', 'ui'], { feeds: licensedUi(licensed) });
+      assert.ok(!fs.existsSync(keyFile(r)), String(licensed));
+    }
+  });
+
+  it('keeps the UI key, not the engine key, when each product has its own', async () => {
+    const ENGINE = 'ech_lic_engineonly000000000000000';
+    const r = await install(['--product', 'both'], { feeds: licensedUi(true), secrets: [UI_ONLY, ENGINE], answers: ['n'] });
+    assert.equal(r.code, 0, r.text);
+    assert.equal(fs.readFileSync(keyFile(r), 'utf8'), `${UI_ONLY}\n`);
+    assert.ok(!walk(r.dir).some((f) => fs.readFileSync(f).includes(ENGINE)));
+  });
+
+  it('does not write it when the engine alone is installed', async () => {
+    const r = await install(['--product', 'engine'], { feeds: licensedUi(true) });
+    assert.ok(!walk(r.dir).some((f) => fs.readFileSync(f).includes(BOTH)));
   });
 });

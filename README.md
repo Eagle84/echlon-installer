@@ -20,8 +20,10 @@ Echlon customer pack
 Then it asks **where to install** (a local folder; Enter accepts the default, `~/Echlon`), and only then for your
 **access key**. If you chose both products it asks whether one key covers both; answer `n` to enter a key for the
 UI and a different one for the engine. The key is the **Echlon licence key** (`ech_lic_...`) you were given. It
-is typed with an asterisk shown for each character, is kept only in memory for this run, is sent only to the Echlon download service,
-and is never written to disk or printed. Without a valid key nothing is installed.
+is typed with an asterisk shown for each character, is sent only to the Echlon download service, and is never
+printed. It is held in memory for the install, with one exception: a licensed UI renews its licence with your key
+and locks itself if the licence ends, so the installer keeps it for the UI as `ui/data/licence.key`, readable
+only by you. Nothing else is written to disk. Without a valid key nothing is installed.
 
 What a key allows decides what you get. A UI key installs the UI, an engine key the engine, a key for both
 installs both. If a key does not include something you asked for, the installer says so and installs the rest.

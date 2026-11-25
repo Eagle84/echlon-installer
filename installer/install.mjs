@@ -11,7 +11,7 @@ import { ServiceFeed, isLicenceKey } from './lib/service.mjs';
 import { installProduct } from './lib/product.mjs';
 import { createProgress } from './lib/progress.mjs';
 import { ask, askHidden } from './lib/prompt.mjs';
-import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeUiSettings } from './lib/wire.mjs';
+import { checkInstallDir, engineLauncher, newEngineToken, uiLauncher, writeLauncher, writeLicenceKey, writeUiSettings } from './lib/wire.mjs';
 
 /**
  * The customer pack installer. It asks what to install, asks for the access key, and installs the
@@ -136,6 +136,12 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     const u = installed.ui;
     const dataDir = path.join(dir, 'ui', 'data');
     if (engineToken) writeUiSettings(dataDir, engineToken);
+    // A licensed UI renews its licence with the customer's key and locks itself when the licence ends, so it has
+    // to hold the key. Only a licensed package, and only a licence key (never a GitHub token), is ever written.
+    if (u.pack?.licensed && isLicenceKey(keys.ui)) {
+      writeLicenceKey(dataDir, keys.ui);
+      out('Your licence key is kept for the UI so it can renew its licence (readable only by you).');
+    }
     const start = u.pack?.start?.[platform === 'win32' ? 'win32' : 'posix'];
     if (start) {
       const launcher = writeLauncher(dir, uiLauncher({ platform, versionDir: u.dest, startRelative: start, dataDir }));
