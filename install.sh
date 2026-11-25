@@ -14,11 +14,11 @@ node=node
 if [ "$major" -lt "$need" ]; then
   echo "Echlon needs Node $need or newer, and this computer does not have it."
   pin="${ECHLON_RUNTIME_FILE:-$here/runtime.txt}"
-  version=$(sed -n 's/^version=//p' "$pin" 2>/dev/null | head -n 1)
+  version=$(sed -n 's/^version=//p' "$pin" 2>/dev/null | tr -d '\r' | head -n 1)
   case "$(uname -s)" in Linux) os=linux ;; Darwin) os=darwin ;; *) os= ;; esac
   case "$(uname -m)" in x86_64 | amd64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) arch= ;; esac
   plat="$os-$arch"
-  expected=$(sed -n "s/^$plat\.tar\.gz=//p" "$pin" 2>/dev/null | head -n 1)
+  expected=$(sed -n "s/^$plat\.tar\.gz=//p" "$pin" 2>/dev/null | tr -d '\r' | head -n 1)
   if [ -z "$os" ] || [ -z "$arch" ] || [ -z "$version" ] || [ -z "$expected" ]; then
     echo "Echlon has no Node to offer for this computer ($plat). Install Node from https://nodejs.org (the LTS version), then run this script again."
     exit 1

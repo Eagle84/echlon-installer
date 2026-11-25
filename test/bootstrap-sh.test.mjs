@@ -49,10 +49,11 @@ after(() => server?.close());
 const bootstrap = async (checksum, args = ['--yes'], extraEnv = {}) => {
   const root = tmpDir('echlon-sh-root-');
   const pin = path.join(tmpDir('echlon-sh-pin-'), 'runtime.txt');
-  fs.writeFileSync(pin, `version=${VERSION}\n${PLAT}.tar.gz=${checksum}\n`);
+  // Windows line endings on purpose: a file edited on Windows must still be read right.
+  fs.writeFileSync(pin, `version=${VERSION}\r\n${PLAT}.tar.gz=${checksum}\r\n`);
   // A PATH with the basic tools and no node.
   const tools = tmpDir('echlon-sh-tools-');
-  for (const t of ['sh', 'dirname', 'sed', 'head', 'cut', 'uname', 'tar', 'gzip', 'mktemp', 'rm', 'mv', 'mkdir', 'curl', 'wget', 'sha256sum', 'shasum', 'openssl', 'cat', 'read', 'printf']) {
+  for (const t of ['sh', 'dirname', 'sed', 'tr', 'head', 'cut', 'uname', 'tar', 'gzip', 'mktemp', 'rm', 'mv', 'mkdir', 'curl', 'wget', 'sha256sum', 'shasum', 'openssl', 'cat', 'read', 'printf']) {
     try {
       const where = execFileSync('sh', ['-c', `command -v ${t}`], { encoding: 'utf8' }).trim();
       if (where.startsWith('/')) fs.symlinkSync(where, path.join(tools, t));
