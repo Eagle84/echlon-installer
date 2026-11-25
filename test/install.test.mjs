@@ -311,6 +311,14 @@ describe('access keys', () => {
     assert.match(r.text, /Nothing was installed\./);
   });
 
+  it('says so when the key typed is an Echlon licence key, which cannot download anything, without asking GitHub', async () => {
+    const r = await install(['--product', 'ui'], { token: 'ech_lic_0123456789abcdef' });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /That is an Echlon licence key/);
+    assert.match(r.text, /download key/);
+    assert.equal(mock.log.api.length, 0, 'the licence key was not sent anywhere');
+  });
+
   it('ends with Done when everything installed', async () => {
     const r = await install(['--product', 'ui']);
     assert.match(r.text, /Done\./);

@@ -95,6 +95,12 @@ export async function run(argv, { env = process.env, out = (s) => process.stdout
     if (!keys[id]) throw new PackError(`An access key is needed for ${products[id].name}. Without it nothing can be installed.`);
   }
 
+  if (wanted.some((id) => keys[id].startsWith('ech_lic_'))) {
+    throw new PackError(
+      'That is an Echlon licence key. It licenses the software once it is installed, but it cannot download it: the installer needs the download key sent with it (a read-only GitHub token starting ghp_ or github_pat_). Nothing was installed.',
+    );
+  }
+
   const target = args.target ?? targetOf();
   const installed = {};
   const failures = [];
