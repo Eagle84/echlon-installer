@@ -392,3 +392,22 @@ describe('setting a package up', () => {
     assert.equal(r.code, 0, r.text);
   });
 });
+
+describe('a GitHub token is never kept', () => {
+  it('writes no key file for an operator installing with a token, even for a licensed UI package', async () => {
+    const feeds = buildFeeds({
+      privateKey: keys.privateKey,
+      target: TARGET,
+      uiFiles: {
+        'echlon-pack.json': JSON.stringify({ name: 'ui', licensed: true, start: { win32: 'start.cmd', posix: 'start.sh' } }),
+        'start.cmd': '@echo off\r\n',
+        'start.sh': '#!/bin/sh\n',
+        'app/server.mjs': 'x\n',
+      },
+    });
+    const r = await install(['--product', 'ui'], { feeds });
+    assert.equal(r.code, 0, r.text);
+    assert.ok(!fs.existsSync(path.join(r.dir, 'ui', 'data', 'licence.key')));
+    for (const file of walk(r.dir)) assert.ok(!fs.readFileSync(file).includes(GOOD), `${file} holds the token`);
+  });
+});

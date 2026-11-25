@@ -43,6 +43,18 @@ function writePrivate(file, text) {
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
 }
 
+/**
+ * The customer's licence key, kept where the UI reads it, so it can renew its licence and lock itself when the
+ * licence ends. It is the one place the installer keeps the key: only for a package that says it is licensed,
+ * owner-only, inside the data folder (so an update keeps it), and never printed.
+ */
+export function writeLicenceKey(dataDir, key) {
+  const file = path.join(dataDir, 'licence.key');
+  writePrivate(file, `${key}
+`);
+  return file;
+}
+
 export function writeUiSettings(dataDir, token) {
   const file = path.join(dataDir, 'echlon.settings.json');
   let current = {};
