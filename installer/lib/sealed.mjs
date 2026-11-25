@@ -4,12 +4,14 @@ import {
   createHash,
   createPublicKey,
   createPrivateKey,
-  decapsulate,
-  encapsulate,
   generateKeyPairSync,
   hkdfSync,
   randomBytes,
 } from 'node:crypto';
+// The two key-wrapping functions are used as kem.encapsulate / kem.decapsulate, never imported by name: they exist only
+// on recent Node, and a named import makes this whole module (and the installer that loads it) fail to load on older ones.
+// Opening a sealed file needs none of them.
+import * as kem from 'node:crypto';
 import fs from 'node:fs';
 
 /**
@@ -63,7 +65,7 @@ export const newContentKey = () => randomBytes(32);
 export function wrapKey(publicKeyB64, cek) {
   if (!Buffer.isBuffer(cek) || cek.length !== 32) throw new SealedError('The release key must be 32 bytes.');
   const pub = createPublicKey({ key: Buffer.from(publicKeyB64, 'base64'), type: 'spki', format: 'der' });
-  const { sharedKey, ciphertext } = encapsulate(pub);
+  const { sharedKey, ciphertext } = kem.encapsulate(pub);
   const kek = Buffer.from(hkdfSync('sha256', sharedKey, Buffer.alloc(0), WRAP_INFO, 32));
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', kek, iv);
@@ -75,7 +77,7 @@ export function unwrapKey(privateKeyPem, wrap) {
   try {
     if (!wrap || wrap.kem !== 'ml-kem-768') throw new Error('unknown wrapping');
     const priv = createPrivateKey(privateKeyPem);
-    const sharedKey = decapsulate(priv, Buffer.from(wrap.ct, 'base64'));
+    const sharedKey = kem.decapsulate(priv, Buffer.from(wrap.ct, 'base64'));
     const kek = Buffer.from(hkdfSync('sha256', sharedKey, Buffer.alloc(0), WRAP_INFO, 32));
     const d = createDecipheriv('aes-256-gcm', kek, Buffer.from(wrap.iv, 'base64'));
     d.setAuthTag(Buffer.from(wrap.tag, 'base64'));

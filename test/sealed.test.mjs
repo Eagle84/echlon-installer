@@ -155,7 +155,7 @@ describe('the signature over a sealed release', () => {
     const manifest = JSON.parse(sealed.repos['example/ui'].assets.find((a) => a.name === 'latest-ui.json').body.toString());
     assert.equal(verifyManifest(manifest, keys.pubB64).sealed.name, 'echlon-ui-1.0.0.zip');
     const moved = JSON.parse(JSON.stringify(manifest));
-    moved.release.sealed.wrap.ct = Buffer.from(moved.release.sealed.wrap.ct, 'base64').reverse().toString('base64');
+    moved.release.sealed.wrap.ct = 'BBBB';
     assert.throws(() => verifyManifest(moved, keys.pubB64), /signature does not match/);
   });
 });

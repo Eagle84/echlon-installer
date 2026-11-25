@@ -146,7 +146,7 @@ describe('what is written for the customer', () => {
     assert.equal(nix.name, 'start-engine.sh');
     assert.match(nix.text, /^#!\/bin\/sh/);
     assert.match(nix.text, /ECHLON_MCP_TOKEN='tok'/);
-    assert.ok(nix.text.includes(`exec ${shq(path.join("/o'b", 'engine/1/echlon'))} --http`));
+    assert.ok(nix.text.includes(`exec ${shq(path.posix.join("/o'b", 'engine/1/echlon'))} --http`));
     assert.ok(nix.text.includes(`'\\''`), 'the single quote in the folder name is closed, escaped and reopened');
   });
 
@@ -208,5 +208,37 @@ describe('the shipped release key and service address', () => {
     assert.equal(url.protocol, 'https:');
     assert.equal(url.origin + '/', url.href);
     assert.equal(url.hostname, 'licence.echlonlabs.com');
+  });
+});
+
+describe('what the installer needs of Node', () => {
+  // The launchers accept Node 20 and newer, and an engine-only install needs nothing newer, so the installer must LOAD
+  // on Node 20. A named import of something only recent Node has makes the whole installer fail at start, even for a
+  // plain release. Tests run on one Node, so this reads the imports instead of trusting that run.
+  const NODE_20_CRYPTO = new Set(['createCipheriv', 'createDecipheriv', 'createHash', 'createPublicKey', 'createPrivateKey', 'generateKeyPairSync', 'hkdfSync', 'randomBytes', 'sign', 'verify', 'randomUUID']);
+
+  it('imports from node:crypto only what Node 20 has, in every file the installer loads', () => {
+    const files = [path.join(ROOT, 'installer', 'install.mjs'), ...fs.readdirSync(path.join(ROOT, 'installer', 'lib')).map((f) => path.join(ROOT, 'installer', 'lib', f))];
+    for (const file of files) {
+      const text = fs.readFileSync(file, 'utf8');
+      for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'node:crypto'/g)) {
+        for (const name of m[1].split(',').map((n) => n.trim()).filter(Boolean)) {
+          assert.ok(NODE_20_CRYPTO.has(name), `${path.basename(file)} imports ${name} from node:crypto by name; it may not exist on Node 20, and then the installer cannot start`);
+        }
+      }
+    }
+  });
+
+  it('keeps the key-wrapping functions out of the names it imports, and says why', () => {
+    const text = fs.readFileSync(path.join(ROOT, 'installer', 'lib', 'sealed.mjs'), 'utf8');
+    assert.ok(!/^\s+(encapsulate|decapsulate),/m.test(text));
+    assert.match(text, /kem\.encapsulate\(/);
+    assert.match(text, /never imported by name/);
+  });
+
+  it('declares the Node it needs as 20, the same as the launchers', () => {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).engines.node, '>=20');
+    assert.match(fs.readFileSync(path.join(ROOT, 'install.ps1'), 'utf8'), /\$need = 20/);
+    assert.match(fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8'), /need=20/);
   });
 });

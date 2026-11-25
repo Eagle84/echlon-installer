@@ -114,15 +114,15 @@ describe('connecting a JSON tool', () => {
 
   it('gives each tool the shape its own config uses', async () => {
     const cases = [
-      ['vscode', (ctx) => path.join(ctx.appdata, 'Code', 'User', 'mcp.json'), (j) => j.servers.echlon, (s) => assert.deepEqual(s, { type: 'stdio', ...ENTRY })],
+      ['vscode', (ctx) => HOSTS.find((h) => h.id === 'vscode').file(ctx), (j) => j.servers.echlon, (s) => assert.deepEqual(s, { type: 'stdio', ...ENTRY })],
       ['opencode', (ctx) => path.join(ctx.home, '.config', 'opencode', 'opencode.json'), (j) => j.mcp.echlon, (s) => assert.deepEqual(s, { type: 'local', command: [ENTRY.command], environment: ENTRY.env, enabled: true })],
-      ['zed', (ctx) => path.join(ctx.appdata, 'Zed', 'settings.json'), (j) => j.context_servers.echlon, (s) => assert.deepEqual(s, { command: { path: ENTRY.command, args: [], env: ENTRY.env } })],
+      ['zed', (ctx) => HOSTS.find((h) => h.id === 'zed').file(ctx), (j) => j.context_servers.echlon, (s) => assert.deepEqual(s, { command: { path: ENTRY.command, args: [], env: ENTRY.env } })],
       ['gemini', (ctx) => path.join(ctx.home, '.gemini', 'settings.json'), (j) => j.mcpServers.echlon, (s) => assert.deepEqual(s, ENTRY)],
       ['windsurf', (ctx) => path.join(ctx.home, '.codeium', 'windsurf', 'mcp_config.json'), (j) => j.mcpServers.echlon, (s) => assert.deepEqual(s, ENTRY)],
       ['lmstudio', (ctx) => path.join(ctx.home, '.lmstudio', 'mcp.json'), (j) => j.mcpServers.echlon, (s) => assert.deepEqual(s, ENTRY)],
     ];
     for (const [id, file, pick, check] of cases) {
-      const ctx = sandboxHosts({ platform: 'win32' });
+      const ctx = sandboxHosts();
       fs.mkdirSync(path.dirname(file(ctx)), { recursive: true });
       const r = await connectHost(id, ctx, ENTRY);
       assert.equal(r.status, 'added', `${id}: ${r.detail}`);
