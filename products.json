@@ -1,0 +1,12 @@
+{
+  "ui": {
+    "name": "Echlon UI",
+    "repo": "Eagle84/echlon-ui-releases",
+    "manifest": "latest-ui.json"
+  },
+  "engine": {
+    "name": "Echlon Engine",
+    "repo": "Eagle84/echlon-engine-releases",
+    "manifest": "latest-{target}.json"
+  }
+}

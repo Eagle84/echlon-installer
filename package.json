@@ -1,0 +1,11 @@
+{
+  "name": "echlon-customer-pack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Installer for Echlon customers: asks what to install, asks for the access key, and installs the signed builds that key may download.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
